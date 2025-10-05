@@ -578,6 +578,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
             {savedRecordingsExpanded && questionRecordings.map((recording, index) => {
               const isCurrentlyPlaying = playingRecordingId === recording.id;
+              const recordingNumber = index + 1;
 
               return (
                 <div key={recording.id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
@@ -586,7 +587,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                       {/* Recording Title and Delete */}
                       <div className="flex items-center justify-between">
                         <h5 className="text-sm font-semibold text-gray-900">
-                          Grabación {index + 1}
+                          Grabación {recordingNumber}
                         </h5>
                         <Button
                           onClick={() => handleDeleteRecording(recording.id)}

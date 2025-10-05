@@ -71,14 +71,12 @@ Deno.serve(async (req: Request) => {
     const modelName = modelSettings?.model_name || 'whisper-1';
     const temperature = modelSettings?.temperature !== undefined ? modelSettings.temperature.toString() : '0';
     const responseFormat = modelSettings?.response_format || 'json';
-    const promptText = modelSettings?.prompt || 'This is a personal memoir recording where someone is sharing their life story. Transcribe only the spoken words, ignore background noise, music, or silence. Do not add phrases like thanks for watching or credits.';
 
     const whisperFormData = new FormData();
     whisperFormData.append("file", audioFile);
     whisperFormData.append("model", modelName);
     whisperFormData.append("response_format", responseFormat);
     whisperFormData.append("temperature", temperature);
-    whisperFormData.append("prompt", promptText);
 
     const whisperResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",

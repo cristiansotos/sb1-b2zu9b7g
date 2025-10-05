@@ -126,7 +126,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         .from('recordings')
         .select('*')
         .eq('chapter_id', chapterId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
       if (error) throw error;
       set({ recordings: recordings || [] });
@@ -177,7 +177,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
       // Update local state
       set(state => ({
-        recordings: [recording, ...state.recordings]
+        recordings: [...state.recordings, recording]
       }));
 
       return { success: true };
