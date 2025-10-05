@@ -145,6 +145,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         clearRecording();
         setAudioQualityWarnings([]);
         setShowQualityWarning(false);
+        onRecordingComplete();
       } else {
         alert(result.error || 'Error al guardar la grabación');
       }
@@ -176,6 +177,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         clearRecording();
         setAudioQualityWarnings([]);
         setShowQualityWarning(false);
+        onRecordingComplete();
       } else {
         alert(result.error || 'Error al guardar la grabación');
       }

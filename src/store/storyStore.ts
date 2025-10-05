@@ -120,34 +120,47 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   updateStoryPhoto: async (storyId, photo) => {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      
+
       if (authError || !user) {
+        console.error('Auth error:', authError);
         return { success: false, error: 'Usuario no autenticado' };
       }
 
+      console.log('Optimizing image...');
       const optimizedImage = await optimizeImage(photo);
       const fileName = `${user.id}/${Date.now()}_${photo.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      
-      const { error: uploadError } = await supabase.storage
+
+      console.log('Uploading to storage:', fileName);
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('photos')
         .upload(fileName, optimizedImage, {
           contentType: 'image/webp',
           upsert: false
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        throw uploadError;
+      }
 
+      console.log('Upload successful, getting public URL...');
       const { data: { publicUrl } } = supabase.storage
         .from('photos')
         .getPublicUrl(fileName);
 
+      console.log('Public URL:', publicUrl);
+      console.log('Updating database...');
       const { error } = await supabase
         .from('stories')
         .update({ photo_url: publicUrl })
         .eq('id', storyId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database update error:', error);
+        throw error;
+      }
 
+      console.log('Database updated successfully');
       set(state => ({
         stories: state.stories.map(story =>
           story.id === storyId ? { ...story, photo_url: publicUrl } : story
@@ -156,6 +169,7 @@ export const useStoryStore = create<StoryState>((set, get) => ({
 
       return { success: true };
     } catch (error: any) {
+      console.error('updateStoryPhoto error:', error);
       return { success: false, error: error.message };
     }
   },

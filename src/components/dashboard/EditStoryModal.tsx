@@ -45,11 +45,14 @@ const EditStoryModal: React.FC<EditStoryModalProps> = ({ isOpen, onClose, story 
     }
   }, [story]);
 
-  const handlePhotoChange = (file: File) => {
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     setPhoto(file);
     const reader = new FileReader();
-    reader.onload = (e) => {
-      setPhotoPreview(e.target?.result as string);
+    reader.onload = (event) => {
+      setPhotoPreview(event.target?.result as string);
     };
     reader.readAsDataURL(file);
   };
@@ -172,7 +175,7 @@ const EditStoryModal: React.FC<EditStoryModalProps> = ({ isOpen, onClose, story 
             >
               Galería
             </Button>
-            
+
             <Button
               type="button"
               variant="outline"
@@ -183,21 +186,21 @@ const EditStoryModal: React.FC<EditStoryModalProps> = ({ isOpen, onClose, story 
               Cámara
             </Button>
           </div>
-          
+
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            onChange={(e) => e.target.files?.[0] && handlePhotoChange(e.target.files[0])}
+            onChange={handlePhotoChange}
             className="hidden"
           />
-          
+
           <input
             ref={cameraInputRef}
             type="file"
             accept="image/*"
             capture="environment"
-            onChange={(e) => e.target.files?.[0] && handlePhotoChange(e.target.files[0])}
+            onChange={handlePhotoChange}
             className="hidden"
           />
         </div>

@@ -84,8 +84,8 @@ const StoryCard: React.FC<StoryCardProps> = ({ story }) => {
             {story.title}
           </h3>
           
-          {/* Action Buttons */}
-          <div className="flex items-center space-x-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
+          {/* Action Buttons - Always visible */}
+          <div className="flex items-center space-x-1">
             <Button
               variant="ghost"
               size="sm"

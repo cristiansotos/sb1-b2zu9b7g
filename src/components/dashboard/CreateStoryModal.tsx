@@ -31,11 +31,17 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
   const { createStory } = useStoryStore();
   const navigate = useNavigate();
 
-  const handlePhotoChange = (file: File) => {
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     setPhoto(file);
     const reader = new FileReader();
-    reader.onload = (e) => {
-      setPhotoPreview(e.target?.result as string);
+    reader.onload = (event) => {
+      setPhotoPreview(event.target?.result as string);
     };
     reader.readAsDataURL(file);
   };
@@ -146,37 +152,47 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
               variant="outline"
               size="sm"
               icon={Upload}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
             >
               Galería
             </Button>
-            
+
             <Button
               type="button"
               variant="outline"
               size="sm"
               icon={Camera}
-              onClick={() => cameraInputRef.current?.click()}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                cameraInputRef.current?.click();
+              }}
             >
               Cámara
             </Button>
           </div>
-          
+
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            onChange={(e) => e.target.files?.[0] && handlePhotoChange(e.target.files[0])}
+            onChange={handlePhotoChange}
             className="hidden"
+            onClick={(e) => e.stopPropagation()}
           />
-          
+
           <input
             ref={cameraInputRef}
             type="file"
             accept="image/*"
             capture="environment"
-            onChange={(e) => e.target.files?.[0] && handlePhotoChange(e.target.files[0])}
+            onChange={handlePhotoChange}
             className="hidden"
+            onClick={(e) => e.stopPropagation()}
           />
         </div>
 

@@ -56,7 +56,17 @@ export const optimizeImage = async (file: File, maxSize = 1200, quality = 0.75):
 
       // Draw and compress
       ctx.drawImage(img, 0, 0, width, height);
-      canvas.toBlob(resolve, 'image/webp', quality);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Failed to create image blob'));
+          }
+        },
+        'image/webp',
+        quality
+      );
     };
 
     img.onerror = () => reject(new Error('Failed to load image'));
