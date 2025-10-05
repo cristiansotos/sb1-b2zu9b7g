@@ -32,6 +32,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const [audioQualityWarnings, setAudioQualityWarnings] = useState<string[]>([]);
   const [showQualityWarning, setShowQualityWarning] = useState(false);
   const [audioQualityThresholds, setAudioQualityThresholds] = useState<AudioQualityThresholds | undefined>(undefined);
+  const [savedRecordingsExpanded, setSavedRecordingsExpanded] = useState(true);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ type: 'recording' | 'transcript', id: string } | null>(null);
   const playingAudioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -184,19 +186,28 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   };
 
   const handleDeleteRecording = async (recordingId: string) => {
-    if (!confirm('¿Estás seguro de que quieres eliminar esta grabación de audio? Esta acción no se puede deshacer.')) {
-      return;
-    }
+    setDeleteConfirmModal({ type: 'recording', id: recordingId });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmModal) return;
 
     try {
-      const result = await deleteRecording(recordingId);
-      if (result.success) {
-      } else {
-        alert(result.error || 'Error al eliminar la grabación');
+      if (deleteConfirmModal.type === 'recording') {
+        const result = await deleteRecording(deleteConfirmModal.id);
+        if (!result.success) {
+          console.error('Error al eliminar la grabación:', result.error);
+        }
+      } else if (deleteConfirmModal.type === 'transcript') {
+        const result = await deleteRecordingTranscript(deleteConfirmModal.id);
+        if (!result.success) {
+          console.error('Error al eliminar la transcripción:', result.error);
+        }
       }
     } catch (error) {
-      console.error('Error deleting recording:', error);
-      alert('Error al eliminar la grabación');
+      console.error('Error during delete:', error);
+    } finally {
+      setDeleteConfirmModal(null);
     }
   };
 
@@ -547,62 +558,82 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         {/* Saved Recordings Section */}
         {questionRecordings.length > 0 && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 pb-2 border-b border-gray-200">
-              <Play className="h-4 w-4 text-gray-600" />
-              <h4 className="text-sm font-semibold text-gray-700">Grabaciones Guardadas ({questionRecordings.length})</h4>
-            </div>
+            <button
+              onClick={() => setSavedRecordingsExpanded(!savedRecordingsExpanded)}
+              className="w-full flex items-center justify-between gap-2 pb-2 border-b border-gray-200 hover:bg-gray-50 transition-colors px-2 py-1 rounded"
+            >
+              <div className="flex items-center gap-2">
+                <Play className="h-4 w-4 text-gray-600" />
+                <h4 className="text-sm font-semibold text-gray-700">Grabaciones Guardadas ({questionRecordings.length})</h4>
+              </div>
+              <svg
+                className={`h-4 w-4 text-gray-600 transition-transform ${savedRecordingsExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
 
-            {questionRecordings.map((recording) => {
+            {savedRecordingsExpanded && questionRecordings.map((recording, index) => {
               const isCurrentlyPlaying = playingRecordingId === recording.id;
 
               return (
                 <div key={recording.id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
                   <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <Button
-                          onClick={() => recording.audio_url && handlePlaySavedRecording(recording.id, recording.audio_url)}
-                          icon={isCurrentlyPlaying ? Square : Play}
-                          variant="secondary"
-                          size="sm"
-                        >
-                          {isCurrentlyPlaying ? 'Detener' : 'Reproducir'}
-                        </Button>
-
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="font-medium text-gray-700">
-                            {recording.duration_ms ? formatDuration(recording.duration_ms / 1000) : 'Sin duración'}
-                          </span>
-                          <span className="text-gray-300">•</span>
-                          <span className="text-gray-500">
-                            {new Date(recording.created_at).toLocaleDateString('es-ES')}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {!recording.transcript && (
-                          <Button
-                            onClick={() => handleTranscribe(recording.id)}
-                            icon={FileText}
-                            variant="secondary"
-                            size="sm"
-                            loading={isUploading}
-                          >
-                            <span className="hidden sm:inline">Transcribir</span>
-                            <span className="sm:hidden">Transcribir</span>
-                          </Button>
-                        )}
+                    <div className="flex flex-col gap-3">
+                      {/* Recording Title and Delete */}
+                      <div className="flex items-center justify-between">
+                        <h5 className="text-sm font-semibold text-gray-900">
+                          Grabación {index + 1}
+                        </h5>
                         <Button
                           onClick={() => handleDeleteRecording(recording.id)}
                           icon={Trash2}
                           variant="ghost"
                           size="sm"
                           className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                        >
-                          <span className="hidden sm:inline">Eliminar</span>
-                          <span className="sm:hidden"><Trash2 className="h-4 w-4" /></span>
-                        </Button>
+                        />
+                      </div>
+
+                      {/* Recording Metadata and Controls */}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <Button
+                            onClick={() => recording.audio_url && handlePlaySavedRecording(recording.id, recording.audio_url)}
+                            icon={isCurrentlyPlaying ? Square : Play}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            {isCurrentlyPlaying ? 'Detener' : 'Reproducir'}
+                          </Button>
+
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="font-medium text-gray-700">
+                              {recording.audio_duration_ms ? formatDuration(recording.audio_duration_ms / 1000) : 'Sin duración'}
+                            </span>
+                            <span className="text-gray-300">•</span>
+                            <span className="text-gray-500">
+                              {new Date(recording.created_at).toLocaleDateString('es-ES')}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {!recording.transcript && (
+                            <Button
+                              onClick={() => handleTranscribe(recording.id)}
+                              icon={FileText}
+                              variant="secondary"
+                              size="sm"
+                              loading={isUploading}
+                              className="bg-gradient-to-r from-green-500 to-purple-500 hover:from-green-600 hover:to-purple-600 text-white border-none shadow-md"
+                            >
+                              Transcribir
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -614,15 +645,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         plainText={recording.transcript}
                         qualityWarnings={recording.quality_warnings}
                         onEdit={() => setEditingTranscriptId(recording.id)}
-                        onDelete={async () => {
-                          if (!confirm('¿Estás seguro de que quieres eliminar esta transcripción? Esta acción no se puede deshacer.')) {
-                            return;
-                          }
-                          const result = await deleteRecordingTranscript(recording.id);
-                          if (!result.success) {
-                            alert(result.error || 'Error al eliminar la transcripción');
-                          }
-                        }}
+                        onDelete={() => setDeleteConfirmModal({ type: 'transcript', id: recording.id })}
                         recordingDate={recording.created_at}
                       />
                     </div>
@@ -674,6 +697,38 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
               className="max-w-full max-h-[90vh] object-contain rounded-lg"
               onClick={(e) => e.stopPropagation()}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              Confirmar Eliminación
+            </h3>
+            <p className="text-gray-600 mb-6">
+              {deleteConfirmModal.type === 'recording'
+                ? '¿Estás seguro de que quieres eliminar esta grabación de audio? Esta acción no se puede deshacer.'
+                : '¿Estás seguro de que quieres eliminar esta transcripción? Esta acción no se puede deshacer.'}
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteConfirmModal(null)}
+                fullWidth
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="danger"
+                onClick={confirmDelete}
+                fullWidth
+              >
+                Eliminar
+              </Button>
+            </div>
           </div>
         </div>
       )}

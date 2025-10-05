@@ -85,13 +85,13 @@ const StoryCard: React.FC<StoryCardProps> = ({ story }) => {
           </h3>
           
           {/* Action Buttons */}
-          <div className="flex items-center space-x-1 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
+          <div className="flex items-center space-x-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
             <Button
               variant="ghost"
               size="sm"
               icon={Edit}
               onClick={handleEdit}
-              className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600"
+              className="h-8 w-8 p-0 hover:bg-blue-50 text-gray-700 hover:text-blue-600"
             />
             <Button
               variant="ghost"
@@ -99,7 +99,7 @@ const StoryCard: React.FC<StoryCardProps> = ({ story }) => {
               icon={Trash2}
               onClick={handleDelete}
               loading={deleting}
-              className={`h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 ${showDeleteConfirm ? 'text-red-600 hover:text-red-700' : ''}`}
+              className={`h-8 w-8 p-0 hover:bg-red-50 ${showDeleteConfirm ? 'text-red-600 hover:text-red-700' : 'text-gray-700 hover:text-red-600'}`}
             />
           </div>
         </div>

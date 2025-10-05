@@ -1,5 +1,5 @@
 import React from 'react';
-import { DivideIcon as LucideIcon } from 'lucide-react';
+import { Divide as LucideIcon } from 'lucide-react';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
@@ -57,15 +57,15 @@ const Button: React.FC<ButtonProps> = ({
       {...props}
     >
       {loading ? (
-        <div className={`animate-spin rounded-full border-2 border-white border-t-transparent ${iconSizeClasses[size]} mr-2`} />
+        <div className={`animate-spin rounded-full border-2 border-white border-t-transparent ${iconSizeClasses[size]} ${children ? 'mr-2' : ''}`} />
       ) : Icon && iconPosition === 'left' ? (
-        <Icon className={`${iconSizeClasses[size]} mr-2`} />
+        <Icon className={`${iconSizeClasses[size]} ${children ? 'mr-2' : ''}`} />
       ) : null}
-      
+
       {children}
-      
+
       {!loading && Icon && iconPosition === 'right' && (
-        <Icon className={`${iconSizeClasses[size]} ml-2`} />
+        <Icon className={`${iconSizeClasses[size]} ${children ? 'ml-2' : ''}`} />
       )}
     </button>
   );
