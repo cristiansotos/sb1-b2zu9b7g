@@ -64,7 +64,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
             id,
             title,
             order,
-            question_templates!inner (
+            question_templates (
               question,
               order
             )
@@ -80,7 +80,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
             title: template.title,
             order: template.order,
             custom_questions: [],
-            question_order: template.question_templates
+            question_order: (template.question_templates || [])
               .sort((a: any, b: any) => a.order - b.order)
               .map((q: any) => q.question)
           }));

@@ -4,10 +4,21 @@ import { supabase } from '../lib/supabase';
 export interface Question {
   id: string;
   chapter_template_id: string;
+  section_template_id?: string;
   question: string;
   order: number;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface Section {
+  id: string;
+  chapter_template_id: string;
+  title: string;
+  order: number;
+  created_at?: string;
+  updated_at?: string;
+  questions?: Question[];
 }
 
 export interface Chapter {
@@ -16,6 +27,7 @@ export interface Chapter {
   order: number;
   created_at?: string;
   updated_at?: string;
+  sections?: Section[];
   questions?: Question[];
 }
 
@@ -24,16 +36,21 @@ interface ChaptersState {
   loading: boolean;
   error: string | null;
   fetchChapters: () => Promise<void>;
+  fetchSectionsForChapter: (chapterId: string) => Promise<Section[]>;
   fetchQuestionsForChapter: (chapterId: string) => Promise<Question[]>;
+  fetchQuestionsForSection: (sectionId: string) => Promise<Question[]>;
   createChapter: (title: string, order: number) => Promise<void>;
   updateChapter: (id: string, title: string, order: number) => Promise<void>;
   deleteChapter: (id: string) => Promise<void>;
   reorderChapters: (chapters: Chapter[]) => Promise<void>;
-  createQuestion: (chapterId: string, question: string, order: number) => Promise<void>;
-  updateQuestion: (id: string, question: string, order: number) => Promise<void>;
+  createSection: (chapterId: string, title: string, order: number) => Promise<void>;
+  updateSection: (id: string, title: string, order: number) => Promise<void>;
+  deleteSection: (id: string) => Promise<void>;
+  reorderSections: (chapterId: string, sections: Section[]) => Promise<void>;
+  createQuestion: (chapterId: string, question: string, order: number, sectionId?: string) => Promise<void>;
+  updateQuestion: (id: string, question: string, order: number, sectionId?: string) => Promise<void>;
   deleteQuestion: (id: string) => Promise<void>;
-  reorderQuestions: (chapterId: string, questions: Question[]) => Promise<void>;
-  seedQuestions: () => Promise<void>;
+  reorderQuestions: (questions: Question[]) => Promise<void>;
 }
 
 export const useChaptersStore = create<ChaptersState>((set, get) => ({
@@ -57,11 +74,33 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
     }
   },
 
+  fetchSectionsForChapter: async (chapterId: string) => {
+    const { data, error } = await supabase
+      .from('section_templates')
+      .select('*')
+      .eq('chapter_template_id', chapterId)
+      .order('order', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  },
+
   fetchQuestionsForChapter: async (chapterId: string) => {
     const { data, error } = await supabase
       .from('question_templates')
       .select('*')
       .eq('chapter_template_id', chapterId)
+      .order('order', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  fetchQuestionsForSection: async (sectionId: string) => {
+    const { data, error } = await supabase
+      .from('question_templates')
+      .select('*')
+      .eq('section_template_id', sectionId)
       .order('order', { ascending: true });
 
     if (error) throw error;
@@ -141,12 +180,75 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
     }
   },
 
-  createQuestion: async (chapterId: string, question: string, order: number) => {
+  createSection: async (chapterId: string, title: string, order: number) => {
+    try {
+      const { error } = await supabase
+        .from('section_templates')
+        .insert({
+          chapter_template_id: chapterId,
+          title,
+          order,
+        });
+
+      if (error) throw error;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  updateSection: async (id: string, title: string, order: number) => {
+    try {
+      const { error } = await supabase
+        .from('section_templates')
+        .update({ title, order })
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  deleteSection: async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('section_templates')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  reorderSections: async (chapterId: string, sections: Section[]) => {
+    try {
+      const updates = sections.map((section, index) => ({
+        id: section.id,
+        order: index,
+      }));
+
+      for (const update of updates) {
+        const { error } = await supabase
+          .from('section_templates')
+          .update({ order: update.order })
+          .eq('id', update.id);
+
+        if (error) throw error;
+      }
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  createQuestion: async (chapterId: string, question: string, order: number, sectionId?: string) => {
     try {
       const { error } = await supabase
         .from('question_templates')
         .insert({
           chapter_template_id: chapterId,
+          section_template_id: sectionId || null,
           question,
           order,
         });
@@ -157,11 +259,15 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
     }
   },
 
-  updateQuestion: async (id: string, question: string, order: number) => {
+  updateQuestion: async (id: string, question: string, order: number, sectionId?: string) => {
     try {
       const { error } = await supabase
         .from('question_templates')
-        .update({ question, order })
+        .update({
+          question,
+          order,
+          section_template_id: sectionId || null,
+        })
         .eq('id', id);
 
       if (error) throw error;
@@ -183,7 +289,7 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
     }
   },
 
-  reorderQuestions: async (chapterId: string, questions: Question[]) => {
+  reorderQuestions: async (questions: Question[]) => {
     try {
       const updates = questions.map((question, index) => ({
         id: question.id,
@@ -199,32 +305,6 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
         if (error) throw error;
       }
     } catch (error: any) {
-      throw error;
-    }
-  },
-
-  seedQuestions: async () => {
-    set({ loading: true, error: null });
-    try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/seed-questions`;
-      const headers = {
-        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-      };
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers,
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to seed questions');
-      }
-
-      await get().fetchChapters();
-      set({ loading: false });
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
       throw error;
     }
   },

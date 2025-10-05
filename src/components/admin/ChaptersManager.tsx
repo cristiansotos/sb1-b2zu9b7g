@@ -85,7 +85,7 @@ function SortableChapter({ chapter, onEdit, onDelete, onToggle, isExpanded }: So
 }
 
 export function ChaptersManager() {
-  const { chapters, loading, fetchChapters, createChapter, updateChapter, deleteChapter, reorderChapters, seedQuestions } = useChaptersStore();
+  const { chapters, loading, fetchChapters, createChapter, updateChapter, deleteChapter, reorderChapters } = useChaptersStore();
   const [localChapters, setLocalChapters] = useState<Chapter[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -192,19 +192,6 @@ export function ChaptersManager() {
     });
   };
 
-  const handleSeedQuestions = async () => {
-    if (!confirm('¿Estás seguro de cargar todas las preguntas? Esto sobrescribirá las preguntas existentes.')) {
-      return;
-    }
-
-    try {
-      await seedQuestions();
-      toast.success('Preguntas cargadas exitosamente');
-    } catch (error) {
-      toast.error('Error al cargar preguntas');
-    }
-  };
-
   if (loading && localChapters.length === 0) {
     return <div className="text-center py-8">Cargando...</div>;
   }
@@ -213,15 +200,10 @@ export function ChaptersManager() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">Gestión de Capítulos</h2>
-        <div className="flex gap-2">
-          <Button onClick={handleSeedQuestions} variant="secondary">
-            Cargar Preguntas Por Defecto
-          </Button>
-          <Button onClick={() => setIsCreateModalOpen(true)}>
-            <Plus className="h-5 w-5 mr-2" />
-            Nuevo Capítulo
-          </Button>
-        </div>
+        <Button onClick={() => setIsCreateModalOpen(true)}>
+          <Plus className="h-5 w-5 mr-2" />
+          Nuevo Capítulo
+        </Button>
       </div>
 
       <DndContext
@@ -248,7 +230,7 @@ export function ChaptersManager() {
 
       {localChapters.length === 0 && (
         <div className="text-center py-8 text-gray-500">
-          No hay capítulos. Crea uno nuevo o carga las preguntas por defecto.
+          No hay capítulos. Crea uno nuevo para comenzar.
         </div>
       )}
 
