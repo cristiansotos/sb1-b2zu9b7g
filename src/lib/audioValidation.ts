@@ -6,12 +6,39 @@ export interface AudioQualityMetrics {
   warnings: string[];
 }
 
-const MINIMUM_DURATION_MS = 1000;
-const MAXIMUM_DURATION_MS = 600000;
-const SILENCE_THRESHOLD = 0.01;
-const LOW_ENERGY_THRESHOLD = 0.05;
+export interface AudioQualityThresholds {
+  minDurationMs: number;
+  maxDurationMs: number;
+  silenceThreshold: number;
+  lowEnergyThreshold: number;
+  silenceRatioWarning: number;
+}
 
-export const analyzeAudioQuality = async (audioBlob: Blob): Promise<AudioQualityMetrics> => {
+// Default thresholds (fallback values if database settings are not available)
+// Audio samples in Web Audio API range from -1.0 to +1.0
+const DEFAULT_MINIMUM_DURATION_MS = 1000; // 1 second
+const DEFAULT_MAXIMUM_DURATION_MS = 1200000; // 20 minutes (increased from 10)
+const DEFAULT_SILENCE_THRESHOLD = 0.005; // 0.5% amplitude (lowered from 1%)
+const DEFAULT_LOW_ENERGY_THRESHOLD = 0.02; // 2% amplitude (lowered from 5% for less false positives)
+const DEFAULT_SILENCE_RATIO_WARNING = 0.85; // Warn if 85%+ is silence (increased from 70%)
+
+// Typical audio energy levels for reference:
+// - Normal speech with proper recording: 0.1 to 0.3
+// - Quiet but clear speech: 0.05 to 0.1
+// - Very quiet/distant: 0.02 to 0.05
+// - Too quiet to transcribe reliably: below 0.02
+
+export const analyzeAudioQuality = async (
+  audioBlob: Blob,
+  thresholds?: AudioQualityThresholds
+): Promise<AudioQualityMetrics> => {
+  // Use provided thresholds or fall back to defaults
+  const minDuration = thresholds?.minDurationMs ?? DEFAULT_MINIMUM_DURATION_MS;
+  const maxDuration = thresholds?.maxDurationMs ?? DEFAULT_MAXIMUM_DURATION_MS;
+  const silenceThreshold = thresholds?.silenceThreshold ?? DEFAULT_SILENCE_THRESHOLD;
+  const lowEnergyThreshold = thresholds?.lowEnergyThreshold ?? DEFAULT_LOW_ENERGY_THRESHOLD;
+  const silenceRatioWarning = thresholds?.silenceRatioWarning ?? DEFAULT_SILENCE_RATIO_WARNING;
+
   const warnings: string[] = [];
 
   const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -23,12 +50,13 @@ export const analyzeAudioQuality = async (audioBlob: Blob): Promise<AudioQuality
     const durationMs = audioBuffer.duration * 1000;
     const channelData = audioBuffer.getChannelData(0);
 
-    if (durationMs < MINIMUM_DURATION_MS) {
+    if (durationMs < minDuration) {
       warnings.push('La grabación es demasiado corta (menos de 1 segundo)');
     }
 
-    if (durationMs > MAXIMUM_DURATION_MS) {
-      warnings.push('La grabación es muy larga (más de 10 minutos). Esto podría causar problemas de procesamiento.');
+    if (durationMs > maxDuration) {
+      const maxMinutes = Math.floor(maxDuration / 60000);
+      warnings.push(`La grabación es muy larga (más de ${maxMinutes} minutos). Esto podría causar problemas de procesamiento.`);
     }
 
     let totalEnergy = 0;
@@ -38,7 +66,7 @@ export const analyzeAudioQuality = async (audioBlob: Blob): Promise<AudioQuality
       const sample = Math.abs(channelData[i]);
       totalEnergy += sample;
 
-      if (sample < SILENCE_THRESHOLD) {
+      if (sample < silenceThreshold) {
         silentSamples++;
       }
     }
@@ -46,15 +74,17 @@ export const analyzeAudioQuality = async (audioBlob: Blob): Promise<AudioQuality
     const averageEnergy = totalEnergy / channelData.length;
     const silenceRatio = silentSamples / channelData.length;
 
-    if (averageEnergy < LOW_ENERGY_THRESHOLD) {
-      warnings.push('El nivel de audio es muy bajo. Intenta hablar más cerca del micrófono.');
+    if (averageEnergy < lowEnergyThreshold) {
+      const energyPercent = Math.round(averageEnergy * 100);
+      warnings.push(`El nivel de audio es bajo (${energyPercent}%). Si es posible, intenta hablar más cerca del micrófono.`);
     }
 
-    if (silenceRatio > 0.7) {
-      warnings.push('La grabación contiene mucho silencio. Asegúrate de estar hablando claramente.');
+    if (silenceRatio > silenceRatioWarning) {
+      const silencePercent = Math.round(silenceRatio * 100);
+      warnings.push(`La grabación contiene mucho silencio (${silencePercent}%). Asegúrate de estar hablando claramente.`);
     }
 
-    const isValid = durationMs >= MINIMUM_DURATION_MS && durationMs <= MAXIMUM_DURATION_MS;
+    const isValid = durationMs >= minDuration && durationMs <= maxDuration;
 
     await audioContext.close();
 

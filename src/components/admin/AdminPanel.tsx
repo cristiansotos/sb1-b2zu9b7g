@@ -10,6 +10,7 @@ import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../lib/supabase';
 import { ChaptersManager } from './ChaptersManager';
 import { AIModelSettings } from './AIModelSettings';
+import { AudioQualitySettings } from './AudioQualitySettings';
 
 interface AdminStats {
   totalUsers: number;
@@ -108,8 +109,9 @@ const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
   const [contentSubTab, setContentSubTab] = useState<'stories' | 'recordings' | 'images'>('stories');
   const [heroImages, setHeroImages] = useState([]);
-  const [aiConfigTab, setAiConfigTab] = useState<'audio_transcripts' | 'memory_writing'>('audio_transcripts');
+  const [aiConfigTab, setAiConfigTab] = useState<'audio_transcripts' | 'audio_quality' | 'memory_writing'>('audio_transcripts');
   const [aiModels, setAiModels] = useState([]);
+  const [audioQualitySettings, setAudioQualitySettings] = useState<any>(null);
   const [apiKeys, setApiKeys] = useState([]);
   const [featureFlags, setFeatureFlags] = useState([]);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
@@ -223,9 +225,19 @@ const AdminPanel: React.FC = () => {
         .from('ai_model_settings')
         .select('*')
         .order('service_name');
-      
+
       if (aiError) throw aiError;
       setAiModels(aiModelsData || []);
+
+      // Fetch Audio Quality Settings
+      const { data: audioQualityData, error: audioQualityError } = await supabase
+        .from('audio_quality_settings')
+        .select('*')
+        .limit(1)
+        .single();
+
+      if (audioQualityError && audioQualityError.code !== 'PGRST116') throw audioQualityError;
+      setAudioQualitySettings(audioQualityData);
 
       // Fetch API Keys
       const { data: apiKeysData, error: apiError } = await supabase
@@ -1762,6 +1774,7 @@ const AdminPanel: React.FC = () => {
               <nav className="-mb-px flex space-x-8">
                 {[
                   { id: 'audio_transcripts', label: 'Audio Transcripts', icon: Mic },
+                  { id: 'audio_quality', label: 'Audio Quality', icon: Settings },
                   { id: 'memory_writing', label: 'Memory Writing', icon: FileText }
                 ].map((tab) => (
                   <button
@@ -1798,6 +1811,29 @@ const AdminPanel: React.FC = () => {
                       onUpdate={fetchSystemConfiguration}
                     />
                   ))}
+              </div>
+            )}
+
+            {/* Audio Quality */}
+            {aiConfigTab === 'audio_quality' && (
+              <div className="space-y-6">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-800">
+                    <strong>Note:</strong> Audio quality validation settings control when users receive warnings about their recordings. These thresholds help ensure quality without blocking legitimate recordings.
+                  </p>
+                </div>
+
+                {audioQualitySettings ? (
+                  <AudioQualitySettings
+                    settings={audioQualitySettings}
+                    onUpdate={fetchSystemConfiguration}
+                  />
+                ) : (
+                  <div className="text-center py-8 bg-white rounded-lg border border-gray-200">
+                    <Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600">Loading audio quality settings...</p>
+                  </div>
+                )}
               </div>
             )}
 

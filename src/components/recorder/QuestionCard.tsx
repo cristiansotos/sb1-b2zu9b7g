@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Camera, Upload, Play, Pause, Trash2, Square, CreditCard as Edit, Eye, FileText, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import Button from '../ui/Button';
 import RichTextEditor from '../ui/RichTextEditor';
@@ -8,7 +8,7 @@ import { useChapterStore } from '../../store/chapterStore';
 import { formatDuration } from '../../lib/utils';
 import { Recording, Image } from '../../types';
 import { supabase } from '../../lib/supabase';
-import { analyzeAudioQuality } from '../../lib/audioValidation';
+import { analyzeAudioQuality, AudioQualityThresholds } from '../../lib/audioValidation';
 
 interface QuestionCardProps {
   chapterId: string;
@@ -31,6 +31,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [audioQualityWarnings, setAudioQualityWarnings] = useState<string[]>([]);
   const [showQualityWarning, setShowQualityWarning] = useState(false);
+  const [audioQualityThresholds, setAudioQualityThresholds] = useState<AudioQualityThresholds | undefined>(undefined);
   const playingAudioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -78,9 +79,35 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     }
   };
 
-  // Load images when component mounts
-  React.useEffect(() => {
+  // Fetch audio quality settings
+  const fetchAudioQualitySettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('audio_quality_settings')
+        .select('*')
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+
+      if (data) {
+        setAudioQualityThresholds({
+          minDurationMs: data.min_duration_ms,
+          maxDurationMs: data.max_duration_ms,
+          silenceThreshold: data.silence_threshold,
+          lowEnergyThreshold: data.low_energy_threshold,
+          silenceRatioWarning: data.silence_ratio_warning
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching audio quality settings:', error);
+    }
+  };
+
+  // Load images and settings when component mounts
+  useEffect(() => {
     fetchImages();
+    fetchAudioQualitySettings();
   }, [chapterId, question]);
 
   const handleStartRecording = async () => {
@@ -96,7 +123,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
     setIsUploading(true);
     try {
-      const qualityMetrics = await analyzeAudioQuality(audioBlob);
+      const qualityMetrics = await analyzeAudioQuality(audioBlob, audioQualityThresholds);
 
       if (!qualityMetrics.isValid || qualityMetrics.warnings.length > 0) {
         setAudioQualityWarnings(qualityMetrics.warnings);
@@ -133,7 +160,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
     setIsUploading(true);
     try {
-      const qualityMetrics = await analyzeAudioQuality(audioBlob);
+      const qualityMetrics = await analyzeAudioQuality(audioBlob, audioQualityThresholds);
 
       const result = await createRecording({
         chapterId,
