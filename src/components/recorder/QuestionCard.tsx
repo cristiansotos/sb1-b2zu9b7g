@@ -28,6 +28,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [loadingImages, setLoadingImages] = useState(false);
   const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
+  const [isPausedRecordingId, setIsPausedRecordingId] = useState<string | null>(null);
   const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [audioQualityWarnings, setAudioQualityWarnings] = useState<string[]>([]);
   const [showQualityWarning, setShowQualityWarning] = useState(false);
@@ -194,6 +195,16 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
     try {
       if (deleteConfirmModal.type === 'recording') {
+        // Stop audio playback if this recording is currently playing
+        if (playingRecordingId === deleteConfirmModal.id) {
+          if (playingAudioRef.current) {
+            playingAudioRef.current.pause();
+            playingAudioRef.current = null;
+          }
+          setPlayingRecordingId(null);
+          setIsPausedRecordingId(null);
+        }
+
         const result = await deleteRecording(deleteConfirmModal.id);
         if (!result.success) {
           console.error('Error al eliminar la grabación:', result.error);
@@ -290,15 +301,16 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   };
 
   const handlePlaySavedRecording = (recordingId: string, audioUrl: string) => {
-    if (playingRecordingId === recordingId) {
-      if (playingAudioRef.current) {
-        playingAudioRef.current.pause();
-        playingAudioRef.current = null;
+    // If already playing or paused, resume
+    if (playingRecordingId === recordingId && playingAudioRef.current) {
+      if (isPausedRecordingId === recordingId) {
+        playingAudioRef.current.play();
+        setIsPausedRecordingId(null);
       }
-      setPlayingRecordingId(null);
       return;
     }
 
+    // Stop any current playback
     if (playingAudioRef.current) {
       playingAudioRef.current.pause();
       playingAudioRef.current = null;
@@ -308,18 +320,37 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
     audio.onended = () => {
       setPlayingRecordingId(null);
+      setIsPausedRecordingId(null);
       playingAudioRef.current = null;
     };
 
     audio.onerror = () => {
       setPlayingRecordingId(null);
+      setIsPausedRecordingId(null);
       playingAudioRef.current = null;
       alert('Error al reproducir el audio');
     };
 
     playingAudioRef.current = audio;
     setPlayingRecordingId(recordingId);
+    setIsPausedRecordingId(null);
     audio.play();
+  };
+
+  const handlePauseRecording = (recordingId: string) => {
+    if (playingAudioRef.current && playingRecordingId === recordingId) {
+      playingAudioRef.current.pause();
+      setIsPausedRecordingId(recordingId);
+    }
+  };
+
+  const handleStopRecording = (recordingId: string) => {
+    if (playingAudioRef.current && playingRecordingId === recordingId) {
+      playingAudioRef.current.pause();
+      playingAudioRef.current = null;
+      setPlayingRecordingId(null);
+      setIsPausedRecordingId(null);
+    }
   };
 
   const questionRecordings = recordings.filter(r => r.question === question);
@@ -601,14 +632,46 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                       {/* Recording Metadata and Controls */}
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <Button
-                            onClick={() => recording.audio_url && handlePlaySavedRecording(recording.id, recording.audio_url)}
-                            icon={isCurrentlyPlaying ? Square : Play}
-                            variant="secondary"
-                            size="sm"
-                          >
-                            {isCurrentlyPlaying ? 'Detener' : 'Reproducir'}
-                          </Button>
+                          {!isCurrentlyPlaying ? (
+                            <Button
+                              onClick={() => recording.audio_url && handlePlaySavedRecording(recording.id, recording.audio_url)}
+                              icon={Play}
+                              variant="secondary"
+                              size="sm"
+                            >
+                              Reproducir
+                            </Button>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {isPausedRecordingId !== recording.id ? (
+                                <Button
+                                  onClick={() => handlePauseRecording(recording.id)}
+                                  icon={Pause}
+                                  variant="secondary"
+                                  size="sm"
+                                >
+                                  Pausar
+                                </Button>
+                              ) : (
+                                <Button
+                                  onClick={() => recording.audio_url && handlePlaySavedRecording(recording.id, recording.audio_url)}
+                                  icon={Play}
+                                  variant="secondary"
+                                  size="sm"
+                                >
+                                  Reanudar
+                                </Button>
+                              )}
+                              <Button
+                                onClick={() => handleStopRecording(recording.id)}
+                                icon={Square}
+                                variant="secondary"
+                                size="sm"
+                              >
+                                Detener
+                              </Button>
+                            </div>
+                          )}
 
                           <div className="flex items-center gap-2 text-sm">
                             <span className="font-medium text-gray-700">
@@ -616,7 +679,18 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                             </span>
                             <span className="text-gray-300">•</span>
                             <span className="text-gray-500">
-                              {new Date(recording.created_at).toLocaleDateString('es-ES')}
+                              {new Date(recording.created_at).toLocaleDateString('es-ES', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric'
+                              })}
+                            </span>
+                            <span className="text-gray-300">•</span>
+                            <span className="text-gray-500">
+                              {new Date(recording.created_at).toLocaleTimeString('es-ES', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
                             </span>
                           </div>
                         </div>
