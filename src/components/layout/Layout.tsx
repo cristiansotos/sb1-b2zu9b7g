@@ -1,17 +1,14 @@
 import React from 'react';
-import { BookHeart, MessageSquare } from 'lucide-react';
-import Button from '../ui/Button';
+import { BookHeart } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
   showHeader?: boolean;
-  showFeedbackButton?: boolean;
 }
 
 const Layout: React.FC<LayoutProps> = ({
   children,
-  showHeader = true,
-  showFeedbackButton = true
+  showHeader = true
 }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-teal-50">
@@ -31,17 +28,6 @@ const Layout: React.FC<LayoutProps> = ({
       <main className="relative">
         {children}
       </main>
-
-      {showFeedbackButton && (
-        <Button
-          className="fixed bottom-6 right-6 z-50 shadow-lg"
-          variant="secondary"
-          size="sm"
-          icon={MessageSquare}
-        >
-          Feedback
-        </Button>
-      )}
     </div>
   );
 };

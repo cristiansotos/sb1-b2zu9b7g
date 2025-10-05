@@ -53,7 +53,7 @@ interface Recording {
   chapter_id: string;
   question: string;
   audio_url?: string;
-  duration_seconds?: number;
+  duration_ms?: number;
   created_at: string;
   user_email?: string;
   story_title?: string;
@@ -281,9 +281,9 @@ const AdminPanel: React.FC = () => {
       // Get storage usage (estimated)
       const { data: recordingsWithDuration } = await supabase
         .from('recordings')
-        .select('duration_seconds');
-      
-      const audioStorage = recordingsWithDuration?.reduce((sum, r) => sum + ((r.duration_seconds || 0) * 0.1), 0) || 0; // Estimate 0.1MB per second
+        .select('audio_duration_ms');
+
+      const audioStorage = recordingsWithDuration?.reduce((sum, r) => sum + ((r.audio_duration_ms || 0) / 1000 * 0.1), 0) || 0; // Estimate 0.1MB per second
       const imageStorage = (imagesCount.count || 0) * 0.5; // Estimate 0.5MB per image
       
       setAnalytics({
@@ -340,7 +340,7 @@ const AdminPanel: React.FC = () => {
           chapter_id,
           question,
           audio_url,
-          duration_seconds,
+          audio_duration_ms,
           created_at,
           chapters!inner(
             story_id,
@@ -1420,7 +1420,7 @@ const AdminPanel: React.FC = () => {
                               {recording.story_title}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {formatDuration(recording.duration_seconds)}
+                              {formatDuration((recording.duration_ms || 0) / 1000)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                               {new Date(recording.created_at).toLocaleDateString('es-ES')}

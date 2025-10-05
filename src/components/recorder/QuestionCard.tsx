@@ -109,7 +109,6 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         chapterId,
         question,
         audioBlob,
-        duration: recordingTime,
         durationMs: qualityMetrics.durationMs,
         silenceRatio: qualityMetrics.silenceRatio,
         averageEnergy: qualityMetrics.averageEnergy
@@ -140,7 +139,6 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         chapterId,
         question,
         audioBlob,
-        duration: recordingTime,
         durationMs: qualityMetrics.durationMs,
         silenceRatio: qualityMetrics.silenceRatio,
         averageEnergy: qualityMetrics.averageEnergy,
@@ -519,7 +517,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                     </Button>
 
                     <span className="text-sm font-medium text-gray-700">
-                      {recording.duration_seconds ? formatDuration(recording.duration_seconds) : 'Sin duración'}
+                      {recording.duration_ms ? formatDuration(recording.duration_ms / 1000) : 'Sin duración'}
                     </span>
 
                     <span className="text-sm text-gray-500">

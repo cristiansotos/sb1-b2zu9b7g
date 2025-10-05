@@ -44,7 +44,7 @@ export interface MemoryRecording {
   question: string;
   audio_url?: string;
   transcript?: string;
-  duration_seconds?: number;
+  duration_ms?: number;
   created_at: string;
   updated_at: string;
 }

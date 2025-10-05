@@ -43,10 +43,8 @@ export interface Recording {
   audio_url?: string;
   transcript?: string;
   transcript_formatted?: TranscriptFormatted;
-  photo_url?: string;
   has_speech_detected: boolean;
-  duration_seconds?: number;
-  audio_duration_ms?: number;
+  duration_ms?: number;
   silence_ratio?: number;
   audio_energy_average?: number;
   confidence_score?: number;
@@ -64,46 +62,6 @@ export interface Image {
   chapter_id: string;
   question: string;
   image_url: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MemoryEntry {
-  id: string;
-  story_id: string;
-  title: string;
-  memory_date: string;
-  notes?: string;
-  photo_url?: string;
-  is_quote: boolean;
-  quote_text?: string;
-  place?: string;
-  developmental_stage?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MemoryImage {
-  id: string;
-  memory_id: string;
-  image_url: string;
-  created_at: string;
-}
-
-export interface MemoryTag {
-  id: string;
-  memory_id: string;
-  tag_name: string;
-  tag_type: string;
-  created_at: string;
-}
-
-export interface MemoryMeasurement {
-  id: string;
-  memory_id: string;
-  height_cm?: number;
-  weight_kg?: number;
-  measurement_date: string;
   created_at: string;
   updated_at: string;
 }

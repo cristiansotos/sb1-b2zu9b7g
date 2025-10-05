@@ -90,24 +90,27 @@ export const validateEmail = (email: string): boolean => {
 
 export const validateDateOfBirth = (dateStr: string): { isValid: boolean; error?: string } => {
   if (!dateStr) return { isValid: false, error: 'La fecha es requerida' };
-  
+
   const regex = /^(\d{2})\/(\d{2})\/(\d{4})$/;
   const match = dateStr.match(regex);
-  
+
   if (!match) return { isValid: false, error: 'Formato debe ser DD/MM/YYYY' };
-  
+
   const [, day, month, year] = match;
   const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
   const today = new Date();
-  
+
   if (date > today) return { isValid: false, error: 'La fecha no puede ser futura' };
-  
+
   const age = (today.getTime() - date.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
   if (age > 150) return { isValid: false, error: 'Edad no puede ser mayor a 150 años' };
-  
+
   return { isValid: true };
 };
 
-export const generateUniqueId = (): string => {
-  return Math.random().toString(36).substr(2, 9);
-};
+export function stripHtmlTags(html: string): string {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}

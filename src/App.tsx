@@ -9,7 +9,6 @@ import StoryRecorder from './components/recorder/StoryRecorder';
 import StoryDashboard from './components/child/StoryDashboard';
 import AddMemoryScreen from './components/child/AddMemoryScreen';
 import AdminPanel from './components/admin/AdminPanel';
-import BookEditor from './components/book/BookEditor';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuthStore();
@@ -102,14 +101,6 @@ function App() {
           element={
             <ProtectedRoute>
               <AdminPanel />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/book-editor/:storyId"
-          element={
-            <ProtectedRoute>
-              <BookEditor />
             </ProtectedRoute>
           }
         />

@@ -153,7 +153,7 @@ export const useChildMemoryStore = create<ChildMemoryState>((set, get) => ({
               memory_id: memoryId,
               question: 'Descripción del recuerdo',
               audio_url: publicUrl,
-              duration_seconds: memoryData.audioDuration || 0
+              audio_duration_ms: (memoryData.audioDuration || 0) * 1000
             }])
             .select()
             .single();

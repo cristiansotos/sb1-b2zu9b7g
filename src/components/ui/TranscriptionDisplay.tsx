@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, CreditCard as Edit, Trash2, AlertTriangle } from 'lucide-react';
 import Button from './Button';
-import { stripHtmlTags } from '../../lib/textUtils';
+import { stripHtmlTags } from '../../lib/utils';
 import { NO_SPEECH_MESSAGE } from '../../lib/filteredPhrases';
 
 export interface TranscriptionDisplayProps {

@@ -14,8 +14,6 @@ const HIGHLIGHT_COLORS = [
   { name: 'Yellow', class: 'bg-yellow-200', value: 'yellow' },
   { name: 'Green', class: 'bg-green-200', value: 'green' },
   { name: 'Blue', class: 'bg-blue-200', value: 'blue' },
-  { name: 'Pink', class: 'bg-pink-200', value: 'pink' },
-  { name: 'Orange', class: 'bg-orange-200', value: 'orange' },
 ];
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -53,9 +51,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
       if (parentElement && parentElement.classList.contains('highlight-yellow') ||
           parentElement?.classList.contains('highlight-green') ||
-          parentElement?.classList.contains('highlight-blue') ||
-          parentElement?.classList.contains('highlight-pink') ||
-          parentElement?.classList.contains('highlight-orange')) {
+          parentElement?.classList.contains('highlight-blue')) {
         const text = parentElement.textContent || '';
         const textNode = document.createTextNode(text);
         parentElement.parentNode?.replaceChild(textNode, parentElement);
@@ -81,8 +77,6 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       yellow: '#fef08a',
       green: '#bbf7d0',
       blue: '#bfdbfe',
-      pink: '#fbcfe8',
-      orange: '#fed7aa',
     };
     return colorMap[color] || '#fef08a';
   };
@@ -192,8 +186,6 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         [contenteditable] .highlight-yellow { background-color: #fef08a; }
         [contenteditable] .highlight-green { background-color: #bbf7d0; }
         [contenteditable] .highlight-blue { background-color: #bfdbfe; }
-        [contenteditable] .highlight-pink { background-color: #fbcfe8; }
-        [contenteditable] .highlight-orange { background-color: #fed7aa; }
 
         [contenteditable]:focus {
           outline: none;

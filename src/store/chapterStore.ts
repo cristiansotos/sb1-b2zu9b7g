@@ -16,8 +16,7 @@ interface ChapterState {
     chapterId: string;
     question: string;
     audioBlob: Blob;
-    duration: number;
-    durationMs?: number;
+    durationMs: number;
     silenceRatio?: number;
     averageEnergy?: number;
     qualityWarnings?: string[];
@@ -165,8 +164,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
           chapter_id: data.chapterId,
           question: data.question,
           audio_url: publicUrl,
-          duration_seconds: data.duration,
-          audio_duration_ms: data.durationMs || data.duration * 1000,
+          audio_duration_ms: data.durationMs,
           silence_ratio: data.silenceRatio,
           audio_energy_average: data.averageEnergy,
           quality_warnings: data.qualityWarnings || [],
@@ -274,7 +272,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
       const { plain: formattedPlain, html: formattedHtml } = formatTranscript(filteredTranscript);
 
       // Calculate confidence score
-      const durationMs = recording.audio_duration_ms || recording.duration_seconds * 1000;
+      const durationMs = recording.duration_ms || 0;
       const confidenceScore = calculateConfidenceScore(filteredTranscript, durationMs);
 
       // Detect validation issues
