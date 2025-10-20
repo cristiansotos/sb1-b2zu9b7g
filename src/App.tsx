@@ -9,6 +9,7 @@ import StoryRecorder from './components/recorder/StoryRecorder';
 import StoryDashboard from './components/child/StoryDashboard';
 import AddMemoryScreen from './components/child/AddMemoryScreen';
 import AdminPanel from './components/admin/AdminPanel';
+import AcceptInvitationPage from './components/invitation/AcceptInvitationPage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuthStore();
@@ -103,6 +104,10 @@ function App() {
               <AdminPanel />
             </ProtectedRoute>
           }
+        />
+        <Route
+          path="/accept-invitation"
+          element={<AcceptInvitationPage />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

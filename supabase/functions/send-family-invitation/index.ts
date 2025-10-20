@@ -36,7 +36,12 @@ Deno.serve(async (req: Request) => {
       throw new Error("Missing Supabase configuration");
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
 
     const { invitationId }: InvitationEmailData = await req.json();
 
@@ -72,18 +77,33 @@ Deno.serve(async (req: Request) => {
       .eq('id', invitation.invited_by)
       .maybeSingle();
 
-    let inviterName = "Someone";
+    let inviterName = "Alguien";
     if (inviterProfile) {
       const parts = [inviterProfile.first_name, inviterProfile.last_name];
       if (inviterProfile.second_last_name) {
         parts.push(inviterProfile.second_last_name);
       }
-      inviterName = parts.filter(Boolean).join(' ') || inviterProfile.email || "Someone";
+      inviterName = parts.filter(Boolean).join(' ') || inviterProfile.email || "Alguien";
     }
 
-    const appUrl = Deno.env.get("APP_URL") || "http://localhost:5173";
+    const appUrl = Deno.env.get("APP_URL") || "https://pfvpnltnzglbvnkbkius.supabase.co";
     const invitationLink = `${appUrl}/accept-invitation?token=${invitation.token}`;
-    const familyName = (invitation.family_groups as any)?.name || "a family group";
+    const familyName = (invitation.family_groups as any)?.name || "un grupo familiar";
+
+    const roleNames: Record<string, string> = {
+      owner: 'Propietario',
+      editor: 'Editor',
+      viewer: 'Visualizador'
+    };
+
+    const roleDisplayName = roleNames[invitation.role] || invitation.role;
+
+    const expirationDate = new Date(invitation.expires_at);
+    const formattedExpiration = expirationDate.toLocaleDateString('es-ES', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
 
     const emailHtml = `
       <!DOCTYPE html>
@@ -95,104 +115,206 @@ Deno.serve(async (req: Request) => {
             body {
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
               line-height: 1.6;
-              color: #333;
-              max-width: 600px;
-              margin: 0 auto;
+              color: #424B54;
+              background-color: #F5EFE0;
+              margin: 0;
               padding: 20px;
             }
             .container {
+              max-width: 600px;
+              margin: 0 auto;
               background: white;
-              border-radius: 8px;
-              padding: 40px;
-              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+              border-radius: 12px;
+              padding: 0;
+              box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+              overflow: hidden;
             }
             .header {
+              background: linear-gradient(135deg, #C57B57 0%, #f59e0b 100%);
+              padding: 40px 30px;
               text-align: center;
-              margin-bottom: 30px;
             }
-            .header h1 {
-              color: #2563eb;
+            .logo-wrapper {
+              margin-bottom: 20px;
+            }
+            .logo-text {
+              color: white;
+              font-size: 32px;
+              font-weight: bold;
+              letter-spacing: -0.5px;
               margin: 0;
-              font-size: 28px;
+            }
+            .header-subtitle {
+              color: rgba(255, 255, 255, 0.95);
+              font-size: 18px;
+              margin: 10px 0 0 0;
             }
             .content {
-              margin: 30px 0;
+              padding: 40px 30px;
+            }
+            .greeting {
+              font-size: 18px;
+              color: #424B54;
+              margin-bottom: 20px;
+            }
+            .main-message {
+              font-size: 20px;
+              color: #424B54;
+              line-height: 1.6;
+              margin-bottom: 30px;
+              font-weight: 500;
+            }
+            .highlight {
+              color: #C57B57;
+              font-weight: 600;
             }
             .role-badge {
               display: inline-block;
-              padding: 4px 12px;
-              border-radius: 12px;
+              padding: 6px 16px;
+              border-radius: 20px;
               font-size: 14px;
               font-weight: 600;
-              background: #dbeafe;
-              color: #1e40af;
+              background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+              color: #92400e;
+              border: 2px solid #fbbf24;
+              margin: 0 4px;
+            }
+            .benefits {
+              background: #F5EFE0;
+              border-radius: 8px;
+              padding: 20px;
+              margin: 30px 0;
+            }
+            .benefits-title {
+              font-size: 16px;
+              font-weight: 600;
+              color: #424B54;
+              margin: 0 0 15px 0;
+            }
+            .benefits ul {
+              margin: 0;
+              padding-left: 20px;
+              color: #6b7280;
+            }
+            .benefits li {
+              margin-bottom: 8px;
+            }
+            .button-wrapper {
+              text-align: center;
+              margin: 35px 0;
             }
             .button {
               display: inline-block;
-              padding: 14px 28px;
-              background: #2563eb;
+              padding: 16px 40px;
+              background: linear-gradient(135deg, #C57B57 0%, #f59e0b 100%);
               color: white;
               text-decoration: none;
-              border-radius: 6px;
+              border-radius: 8px;
               font-weight: 600;
-              margin: 20px 0;
+              font-size: 18px;
+              box-shadow: 0 4px 12px rgba(197, 123, 87, 0.3);
+              transition: transform 0.2s;
             }
             .button:hover {
-              background: #1d4ed8;
-            }
-            .footer {
-              margin-top: 40px;
-              padding-top: 20px;
-              border-top: 1px solid #e5e7eb;
-              font-size: 14px;
-              color: #6b7280;
-              text-align: center;
+              transform: translateY(-2px);
             }
             .warning {
               background: #fef3c7;
               border-left: 4px solid #f59e0b;
-              padding: 12px;
-              margin: 20px 0;
+              padding: 16px;
+              margin: 25px 0;
+              border-radius: 4px;
+            }
+            .warning-title {
+              font-weight: 600;
+              color: #92400e;
+              margin: 0 0 8px 0;
+              font-size: 15px;
+            }
+            .warning-text {
+              color: #78350f;
+              margin: 0;
               font-size: 14px;
+            }
+            .security-note {
+              font-size: 14px;
+              color: #6b7280;
+              margin: 20px 0;
+              padding: 15px;
+              background: #f9fafb;
+              border-radius: 6px;
+            }
+            .footer {
+              background: #424B54;
+              padding: 30px;
+              text-align: center;
+              color: white;
+            }
+            .footer-logo {
+              font-size: 24px;
+              font-weight: bold;
+              margin-bottom: 15px;
+            }
+            .footer-text {
+              font-size: 13px;
+              color: rgba(255, 255, 255, 0.8);
+              margin: 8px 0;
+            }
+            .footer-link {
+              word-break: break-all;
+              font-size: 12px;
+              color: rgba(255, 255, 255, 0.6);
+              margin-top: 15px;
             }
           </style>
         </head>
         <body>
           <div class="container">
             <div class="header">
-              <h1>Family Group Invitation</h1>
+              <div class="logo-wrapper">
+                <h1 class="logo-text">✨ Ethernal</h1>
+              </div>
+              <p class="header-subtitle">Preservando las historias de tu familia</p>
             </div>
 
             <div class="content">
-              <p>Hi there!</p>
+              <p class="greeting">¡Hola!</p>
 
-              <p><strong>${inviterName}</strong> has invited you to join <strong>${familyName}</strong> as a <span class="role-badge">${invitation.role}</span>.</p>
+              <p class="main-message">
+                <span class="highlight">${inviterName}</span> te ha invitado a unirte al grupo familiar <span class="highlight">${familyName}</span> como <span class="role-badge">${roleDisplayName}</span>
+              </p>
 
-              <p>By joining this family group, you'll be able to:</p>
-              <ul>
-                <li>View and contribute to family stories and memories</li>
-                <li>Add recordings and images to shared content</li>
-                <li>Collaborate with other family members</li>
-              </ul>
+              <div class="benefits">
+                <p class="benefits-title">🎉 Al unirte a este grupo familiar podrás:</p>
+                <ul>
+                  <li>Ver y contribuir a las historias y recuerdos familiares</li>
+                  <li>Añadir grabaciones e imágenes al contenido compartido</li>
+                  <li>Colaborar con otros miembros de la familia</li>
+                  <li>Preservar el legado familiar para las futuras generaciones</li>
+                </ul>
+              </div>
 
-              <div style="text-align: center;">
-                <a href="${invitationLink}" class="button">Accept Invitation</a>
+              <div class="button-wrapper">
+                <a href="${invitationLink}" class="button">Aceptar Invitación</a>
               </div>
 
               <div class="warning">
-                <strong>⏰ This invitation expires in 7 days</strong><br>
-                Make sure to accept it before ${new Date(invitation.expires_at).toLocaleDateString()}.
+                <p class="warning-title">⏰ Esta invitación expira pronto</p>
+                <p class="warning-text">
+                  Asegúrate de aceptarla antes del <strong>${formattedExpiration}</strong>.
+                </p>
               </div>
 
-              <p style="font-size: 14px; color: #6b7280;">
-                If you weren't expecting this invitation or don't know ${inviterName}, you can safely ignore this email.
-              </p>
+              <div class="security-note">
+                🔒 <strong>Nota de seguridad:</strong> Si no esperabas esta invitación o no conoces a ${inviterName}, puedes ignorar este correo de forma segura.
+              </div>
             </div>
 
             <div class="footer">
-              <p>This invitation was sent by ${inviterName}</p>
-              <p>If the button doesn't work, copy and paste this link into your browser:</p>
-              <p style="word-break: break-all; font-size: 12px;">${invitationLink}</p>
+              <div class="footer-logo">Ethernal</div>
+              <p class="footer-text">Esta invitación fue enviada por ${inviterName}</p>
+              <p class="footer-text">Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+              <p class="footer-link">${invitationLink}</p>
             </div>
           </div>
         </body>
@@ -200,35 +322,74 @@ Deno.serve(async (req: Request) => {
     `;
 
     const emailText = `
-Family Group Invitation
+✨ Ethernal - Invitación al Grupo Familiar
 
-${inviterName} has invited you to join ${familyName} as ${invitation.role}.
+¡Hola!
 
-By joining this family group, you'll be able to:
-- View and contribute to family stories and memories
-- Add recordings and images to shared content
-- Collaborate with other family members
+${inviterName} te ha invitado a unirte al grupo familiar "${familyName}" como ${roleDisplayName}.
 
-Accept your invitation by visiting:
+🎉 Al unirte a este grupo familiar podrás:
+- Ver y contribuir a las historias y recuerdos familiares
+- Añadir grabaciones e imágenes al contenido compartido
+- Colaborar con otros miembros de la familia
+- Preservar el legado familiar para las futuras generaciones
+
+Acepta tu invitación visitando:
 ${invitationLink}
 
-This invitation expires on ${new Date(invitation.expires_at).toLocaleDateString()}.
+⏰ Esta invitación expira el ${formattedExpiration}.
 
-If you weren't expecting this invitation or don't know ${inviterName}, you can safely ignore this email.
+🔒 Nota de seguridad: Si no esperabas esta invitación o no conoces a ${inviterName}, puedes ignorar este correo de forma segura.
+
+---
+Ethernal - Preservando las historias de tu familia
     `;
 
     console.log(`Sending invitation email to ${invitation.email}`);
     console.log(`Family: ${familyName}`);
-    console.log(`Role: ${invitation.role}`);
+    console.log(`Role: ${roleDisplayName}`);
     console.log(`Link: ${invitationLink}`);
+
+    // Send email using Resend
+    const resendApiKey = Deno.env.get('RESEND_API_KEY');
+
+    if (!resendApiKey) {
+      throw new Error('RESEND_API_KEY environment variable not configured');
+    }
+
+    const resendResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Ethernal <onboarding@resend.dev>',
+        to: [invitation.email],
+        subject: `${inviterName} te ha invitado a ${familyName}`,
+        html: emailHtml,
+        text: emailText,
+      }),
+    });
+
+    const resendData = await resendResponse.json();
+
+    if (!resendResponse.ok) {
+      console.error('Resend API error:', resendData);
+      throw new Error(`Failed to send email via Resend: ${resendData.message || 'Unknown error'}`);
+    }
+
+    console.log('✅ Email sent successfully via Resend!');
+    console.log('Email ID:', resendData.id);
 
     return new Response(
       JSON.stringify({
         success: true,
-        message: "Invitation email sent successfully",
+        message: "Invitation email sent successfully via Resend",
         email: invitation.email,
         familyName,
-        invitationLink
+        invitationLink,
+        emailId: resendData.id
       }),
       {
         status: 200,

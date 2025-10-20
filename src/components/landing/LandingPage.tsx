@@ -49,51 +49,106 @@ const LandingPage: React.FC = () => {
     transition_effect: 'fade'
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [imagesLoaded, setImagesLoaded] = useState<Set<number>>(new Set());
+
+  const getOptimizedImageUrl = (url: string) => {
+    if (!url.includes('supabase.co/storage')) return url;
+
+    // Use Supabase's render/image endpoint for automatic optimization
+    const optimizedUrl = url.replace(
+      '/storage/v1/object/public/',
+      '/storage/v1/render/image/public/'
+    );
+
+    const urlObj = new URL(optimizedUrl);
+    urlObj.searchParams.set('width', '1920');
+    urlObj.searchParams.set('quality', '70');
+    urlObj.searchParams.set('resize', 'contain');
+
+    return urlObj.toString();
+  };
 
   useEffect(() => {
     fetchHeroCarousel();
   }, []);
 
   useEffect(() => {
+    if (heroImages.length > 0) {
+      preloadImages();
+    }
+  }, [heroImages]);
+
+  useEffect(() => {
     if (!carouselSettings.auto_play || heroImages.length <= 1) return;
 
     const interval = setInterval(() => {
-      setCurrentImageIndex((prev) => (prev + 1) % heroImages.length);
+      setCurrentImageIndex((prev) => {
+        const nextIndex = (prev + 1) % heroImages.length;
+        preloadNextImage(nextIndex);
+        return nextIndex;
+      });
     }, carouselSettings.transition_duration);
 
     return () => clearInterval(interval);
   }, [carouselSettings.auto_play, carouselSettings.transition_duration, heroImages.length]);
 
+  const preloadImages = () => {
+    heroImages.forEach((image, index) => {
+      const img = new Image();
+      img.onload = () => {
+        setImagesLoaded(prev => new Set(prev).add(index));
+        if (index === 0) {
+          setIsLoading(false);
+        }
+      };
+      img.onerror = () => {
+        console.error(`Failed to load image ${index}`);
+        if (index === 0) {
+          setIsLoading(false);
+        }
+      };
+      img.src = getOptimizedImageUrl(image.image_url);
+    });
+  };
+
+  const preloadNextImage = (nextIndex: number) => {
+    if (imagesLoaded.has(nextIndex)) return;
+
+    const nextNextIndex = (nextIndex + 1) % heroImages.length;
+    if (!imagesLoaded.has(nextNextIndex) && heroImages[nextNextIndex]) {
+      const img = new Image();
+      img.src = getOptimizedImageUrl(heroImages[nextNextIndex].image_url);
+    }
+  };
+
   const fetchHeroCarousel = async () => {
     try {
-      // Fetch active hero images
-      const { data: imagesData, error: imagesError } = await supabase
-        .from('hero_images')
-        .select('*')
-        .eq('is_active', true)
-        .order('display_order', { ascending: true });
+      const [imagesResponse, settingsResponse] = await Promise.all([
+        supabase
+          .from('hero_images')
+          .select('*')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true }),
+        supabase
+          .from('carousel_settings')
+          .select('*')
+          .limit(1)
+          .maybeSingle()
+      ]);
 
-      if (imagesError) throw imagesError;
+      if (imagesResponse.error) throw imagesResponse.error;
 
-      // Fetch carousel settings
-      const { data: settingsData, error: settingsError } = await supabase
-        .from('carousel_settings')
-        .select('*')
-        .limit(1)
-        .maybeSingle();
-
-      if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
-
-      if (imagesData && imagesData.length > 0) {
-        setHeroImages(imagesData);
+      if (imagesResponse.data && imagesResponse.data.length > 0) {
+        setHeroImages(imagesResponse.data);
+      } else {
+        setIsLoading(false);
       }
 
-      if (settingsData) {
-        setCarouselSettings(settingsData);
+      if (settingsResponse.data) {
+        setCarouselSettings(settingsResponse.data);
       }
     } catch (error) {
       console.error('Error fetching hero carousel:', error);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -156,17 +211,33 @@ const LandingPage: React.FC = () => {
     <div className="min-h-screen bg-[#F5EFE0] text-[#424B54] font-sans antialiased overflow-x-hidden">
       {/* Hero Section */}
       <section className="relative h-screen flex items-center justify-center overflow-hidden">
+        {/* Loading Placeholder */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-gradient-to-br from-[#424B54] via-[#5a6470] to-[#424B54]">
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-white text-center">
+                <BookHeart className="h-16 w-16 mx-auto mb-4 animate-pulse" />
+                <p className="text-lg">Cargando...</p>
+              </div>
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/50 to-black/60" />
+          </div>
+        )}
+
         {/* Carousel Background */}
         {!isLoading && heroImages.length > 0 && (
           <>
             {heroImages.map((image, index) => (
               <div
                 key={image.id}
-                className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${
-                  index === currentImageIndex ? 'opacity-100' : 'opacity-0'
+                className={`absolute inset-0 bg-cover bg-center will-change-opacity ${
+                  index === currentImageIndex ? 'opacity-100 z-10' : 'opacity-0 z-0'
                 }`}
                 style={{
-                  backgroundImage: `url(${image.image_url})`
+                  backgroundImage: `url(${image.image_url})`,
+                  transition: 'opacity 1000ms ease-in-out',
+                  transform: 'translateZ(0)',
+                  backfaceVisibility: 'hidden'
                 }}
               >
                 <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/50 to-black/60" />
