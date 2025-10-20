@@ -47,7 +47,7 @@ export const analyzeAudioQuality = async (
     const arrayBuffer = await audioBlob.arrayBuffer();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-    const durationMs = audioBuffer.duration * 1000;
+    const durationMs = Math.round(audioBuffer.duration * 1000);
     const channelData = audioBuffer.getChannelData(0);
 
     if (durationMs < minDuration) {

@@ -1,16 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Camera, Upload, Play, Pause, Trash2, Square, Eye, FileText, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import { Mic, Camera, Upload, Play, Pause, Trash2, Square, Eye, FileText, Image as ImageIcon, AlertTriangle, SkipForward, RotateCcw } from 'lucide-react';
 import Button from '../ui/Button';
 import RichTextEditor from '../ui/RichTextEditor';
 import TranscriptionDisplay from '../ui/TranscriptionDisplay';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { useChapterStore } from '../../store/chapterStore';
+import { useQuestionStateStore } from '../../store/questionStateStore';
+import SkipWarningModal from '../ui/SkipWarningModal';
 import { formatDuration } from '../../lib/utils';
 import { Recording, Image } from '../../types';
 import { supabase } from '../../lib/supabase';
 import { analyzeAudioQuality, AudioQualityThresholds } from '../../lib/audioValidation';
 
 interface QuestionCardProps {
+  storyId: string;
   chapterId: string;
   question: string;
   recordings: Recording[];
@@ -18,6 +21,7 @@ interface QuestionCardProps {
 }
 
 const QuestionCard: React.FC<QuestionCardProps> = ({
+  storyId,
   chapterId,
   question,
   recordings,
@@ -35,6 +39,9 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const [audioQualityThresholds, setAudioQualityThresholds] = useState<AudioQualityThresholds | undefined>(undefined);
   const [savedRecordingsExpanded, setSavedRecordingsExpanded] = useState(true);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ type: 'recording' | 'transcript', id: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showSkipModal, setShowSkipModal] = useState(false);
+  const [skipDontShowAgain, setSkipDontShowAgain] = useState(false);
   const playingAudioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +68,17 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     updateRecordingTranscript,
     deleteRecordingTranscript
   } = useChapterStore();
+
+  const {
+    getQuestionState,
+    skipQuestion,
+    reactivateQuestion,
+    checkQuestionHasContent,
+    markQuestionAsAnswered,
+    userPreferences,
+    fetchUserPreferences,
+    updateShowSkipWarning
+  } = useQuestionStateStore();
 
   const fetchImages = async () => {
     setLoadingImages(true);
@@ -108,6 +126,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   useEffect(() => {
     fetchImages();
     fetchAudioQualitySettings();
+    fetchUserPreferences();
   }, [chapterId, question]);
 
   const handleStartRecording = async () => {
@@ -142,6 +161,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       });
 
       if (result.success) {
+        await markQuestionAsAnswered(storyId, chapterId, question);
         clearRecording();
         setAudioQualityWarnings([]);
         setShowQualityWarning(false);
@@ -174,6 +194,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       });
 
       if (result.success) {
+        await markQuestionAsAnswered(storyId, chapterId, question);
         clearRecording();
         setAudioQualityWarnings([]);
         setShowQualityWarning(false);
@@ -195,6 +216,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const confirmDelete = async () => {
     if (!deleteConfirmModal) return;
 
+    setIsDeleting(true);
     try {
       if (deleteConfirmModal.type === 'recording') {
         // Stop audio playback if this recording is currently playing
@@ -220,17 +242,16 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     } catch (error) {
       console.error('Error during delete:', error);
     } finally {
+      setIsDeleting(false);
       setDeleteConfirmModal(null);
     }
   };
 
   const handleTranscribe = async (recordingId: string) => {
-    setIsUploading(true);
     const result = await transcribeRecording(recordingId);
     if (!result.success) {
       alert(result.error || 'Error al transcribir');
     }
-    setIsUploading(false);
   };
 
   const handleImageUpload = async (file: File) => {
@@ -274,6 +295,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       if (error) throw error;
 
       setImages(prev => [imageData, ...prev]);
+      await markQuestionAsAnswered(storyId, chapterId, question);
     } catch (error: any) {
       console.error('Error uploading image:', error);
       alert('Error al subir la imagen');
@@ -296,6 +318,10 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       if (error) throw error;
 
       setImages(prev => prev.filter(img => img.id !== imageId));
+
+      await supabase.rpc('update_story_progress', {
+        story_id_param: storyId
+      });
     } catch (error: any) {
       console.error('Error deleting image:', error);
       alert('Error al eliminar la imagen');
@@ -356,18 +382,67 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   };
 
   const questionRecordings = recordings.filter(r => r.question === question);
+  const questionState = getQuestionState(storyId, chapterId, question);
+  const isSkipped = questionState === 'skipped';
+
+  const handleSkipQuestion = async () => {
+    const hasContent = await checkQuestionHasContent(chapterId, question);
+
+    if (hasContent && userPreferences?.show_skip_warning) {
+      setShowSkipModal(true);
+    } else {
+      await skipQuestion(storyId, chapterId, question);
+    }
+  };
+
+  const handleConfirmSkip = async () => {
+    if (skipDontShowAgain) {
+      await updateShowSkipWarning(false);
+    }
+    await skipQuestion(storyId, chapterId, question);
+    setSkipDontShowAgain(false);
+  };
+
+  const handleReactivateQuestion = async () => {
+    await reactivateQuestion(storyId, chapterId, question);
+  };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+    <div className={`bg-white rounded-lg sm:rounded-xl shadow-sm border overflow-hidden mb-4 sm:mb-6 transition-all ${isSkipped ? 'border-gray-300 opacity-60' : 'border-gray-200'}`}>
       {/* Question Header */}
-      <div className="bg-gradient-to-r from-blue-50 to-teal-50 px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200">
-        <h3 className="text-lg sm:text-xl font-semibold text-gray-900 leading-tight">{question}</h3>
+      <div className={`px-3 sm:px-6 py-3 sm:py-5 border-b border-gray-200 ${isSkipped ? 'bg-gray-100' : 'bg-gradient-to-r from-blue-50 to-teal-50'}`}>
+        <div className="flex items-start justify-between gap-3">
+          <h3 className={`text-base sm:text-xl font-semibold leading-tight flex-1 ${isSkipped ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{question}</h3>
+          <div className="flex-shrink-0">
+            {!isSkipped ? (
+              <Button
+                onClick={handleSkipQuestion}
+                icon={SkipForward}
+                variant="ghost"
+                size="sm"
+                className="text-gray-600 hover:text-gray-900"
+              >
+                <span className="hidden sm:inline">Saltar pregunta</span>
+              </Button>
+            ) : (
+              <Button
+                onClick={handleReactivateQuestion}
+                icon={RotateCcw}
+                variant="ghost"
+                size="sm"
+                className="text-blue-600 hover:text-blue-700"
+              >
+                <span className="hidden sm:inline">Reactivar</span>
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="p-4 sm:p-6 space-y-6">
+      <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
         {/* Audio Quality Warning */}
         {showQualityWarning && audioQualityWarnings.length > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 sm:p-4">
             <div className="flex items-start">
               <AlertTriangle className="h-5 w-5 text-yellow-600 mr-3 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
@@ -379,7 +454,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                     <li key={index}>• {warning}</li>
                   ))}
                 </ul>
-                <div className="flex items-center space-x-3">
+                <div className="flex flex-col xs:flex-row items-stretch xs:items-center gap-2 xs:space-x-3">
                   <Button
                     onClick={handleSaveAnyway}
                     variant="primary"
@@ -406,12 +481,12 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
         {/* Images Section */}
         {images.length > 0 && (
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <div className="bg-gray-50 rounded-lg p-3 sm:p-4 border border-gray-200">
             <div className="flex items-center gap-2 mb-3">
               <ImageIcon className="h-4 w-4 text-gray-600" />
               <h4 className="text-sm font-semibold text-gray-700">Imágenes ({images.length})</h4>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
               {images.map((image) => (
                 <div
                   key={image.id}
@@ -420,7 +495,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                   <img
                     src={image.image_url}
                     alt={`Imagen para: ${question}`}
-                    className="w-full h-24 sm:h-28 object-cover rounded-lg shadow-sm group-hover:shadow-md transition-shadow"
+                    className="w-full h-20 sm:h-28 object-cover rounded-lg shadow-sm group-hover:shadow-md transition-shadow"
                   />
                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 rounded-lg transition-all flex items-center justify-center space-x-2">
                     <button
@@ -445,8 +520,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         )}
 
         {/* Recording Controls Section */}
-        <div className="bg-gradient-to-br from-blue-50 to-teal-50 rounded-lg p-4 sm:p-5 border border-blue-200">
-          <div className="flex items-center gap-2 mb-4">
+        <div className="bg-gradient-to-br from-blue-50 to-teal-50 rounded-lg p-3 sm:p-5 border border-blue-200">
+          <div className="flex items-center gap-2 mb-3 sm:mb-4">
             <Mic className="h-5 w-5 text-blue-600" />
             <h4 className="text-sm font-semibold text-gray-800">Grabar Audio</h4>
           </div>
@@ -459,14 +534,15 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 variant="primary"
                 size="sm"
                 className="w-full sm:w-auto"
+                disabled={isSkipped}
               >
                 Grabar
               </Button>
             )}
 
             {isRecording && (
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="flex gap-3 flex-1">
+              <div className="flex flex-col gap-2 sm:gap-3">
+                <div className="flex gap-2 sm:gap-3 flex-1">
                   <Button
                     onClick={isPaused ? resumeRecording : pauseRecording}
                     icon={isPaused ? Play : Pause}
@@ -488,8 +564,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                   </Button>
                 </div>
 
-                <div className="flex items-center justify-center bg-white px-4 py-2 rounded-lg border border-blue-300 shadow-sm">
-                  <span className="text-base font-bold text-gray-800 tabular-nums">
+                <div className="flex items-center justify-center bg-white px-3 sm:px-4 py-2 rounded-lg border border-blue-300 shadow-sm">
+                  <span className="text-sm sm:text-base font-bold text-gray-800 tabular-nums">
                     {formatDuration(recordingTime)}
                   </span>
                 </div>
@@ -497,8 +573,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
             )}
 
             {audioBlob && !isRecording && (
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="flex gap-2 flex-1 flex-wrap sm:flex-nowrap">
+              <div className="flex flex-col gap-2 sm:gap-3">
+                <div className="flex gap-2 flex-1">
                   <Button
                     onClick={isPlaying ? stopPlayback : playRecording}
                     icon={isPlaying ? Pause : Play}
@@ -530,8 +606,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                   </Button>
                 </div>
 
-                <div className="flex items-center justify-center bg-white px-4 py-2 rounded-lg border border-blue-300 shadow-sm">
-                  <span className="text-base font-bold text-gray-800 tabular-nums">
+                <div className="flex items-center justify-center bg-white px-3 sm:px-4 py-2 rounded-lg border border-blue-300 shadow-sm">
+                  <span className="text-sm sm:text-base font-bold text-gray-800 tabular-nums">
                     {formatDuration(recordingTime)}
                   </span>
                 </div>
@@ -540,19 +616,19 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
           </div>
 
           {/* Photo Upload Section */}
-          <div className="border-t border-blue-200 pt-4 mt-4">
+          <div className="border-t border-blue-200 pt-3 sm:pt-4 mt-3 sm:mt-4">
             <div className="flex items-center gap-2 mb-3">
               <ImageIcon className="h-4 w-4 text-gray-600" />
               <h5 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Agregar Imágenes</h5>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 w-full">
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 icon={Upload}
                 variant="outline"
                 size="sm"
-                disabled={isUploading}
-                className="flex-1 sm:flex-initial"
+                disabled={isUploading || isSkipped}
+                className="flex-1"
               >
                 Galería
               </Button>
@@ -562,8 +638,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 icon={Camera}
                 variant="outline"
                 size="sm"
-                disabled={isUploading}
-                className="flex-1 sm:flex-initial"
+                disabled={isUploading || isSkipped}
+                className="flex-1"
               >
                 Cámara
               </Button>
@@ -590,7 +666,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
         {/* Saved Recordings Section */}
         {questionRecordings.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2 sm:space-y-3">
             <button
               onClick={() => setSavedRecordingsExpanded(!savedRecordingsExpanded)}
               className="w-full flex items-center justify-between gap-2 pb-2 border-b border-gray-200 hover:bg-gray-50 transition-colors px-2 py-1 rounded"
@@ -615,11 +691,11 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
 
               return (
                 <div key={recording.id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-                  <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                    <div className="flex flex-col gap-3">
+                  <div className="bg-gray-50 px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-200">
+                    <div className="flex flex-col gap-2 sm:gap-3">
                       {/* Recording Title and Delete */}
                       <div className="flex items-center justify-between">
-                        <h5 className="text-sm font-semibold text-gray-900">
+                        <h5 className="text-xs sm:text-sm font-semibold text-gray-900">
                           Grabación {recordingNumber}
                         </h5>
                         <Button
@@ -632,8 +708,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                       </div>
 
                       {/* Recording Metadata and Controls */}
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                        <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
+                        <div className="flex flex-col xs:flex-row items-start xs:items-center gap-2 xs:gap-3 flex-wrap">
                           {!isCurrentlyPlaying ? (
                             <Button
                               onClick={() => recording.audio_url && handlePlaySavedRecording(recording.id, recording.audio_url)}
@@ -675,7 +751,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                             </div>
                           )}
 
-                          <div className="flex items-center gap-2 text-sm">
+                          <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm flex-wrap">
                             <span className="font-medium text-gray-700">
                               {recording.audio_duration_ms ? formatDuration(recording.audio_duration_ms / 1000) : 'Sin duración'}
                             </span>
@@ -697,18 +773,33 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col gap-2 w-full xs:w-auto">
                           {!recording.transcript && (
-                            <Button
-                              onClick={() => handleTranscribe(recording.id)}
-                              icon={FileText}
-                              variant="secondary"
-                              size="sm"
-                              loading={isUploading}
-                              className="bg-gradient-to-r from-green-500 to-purple-500 hover:from-green-600 hover:to-purple-600 text-white border-none shadow-md"
-                            >
-                              Transcribir
-                            </Button>
+                            <>
+                              <Button
+                                onClick={() => handleTranscribe(recording.id)}
+                                icon={FileText}
+                                variant="secondary"
+                                size="sm"
+                                loading={recording.transcribing}
+                                disabled={recording.transcribing}
+                                className="bg-gradient-to-r from-green-500 to-purple-500 hover:from-green-600 hover:to-purple-600 text-white border-none shadow-md w-full xs:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <span className="text-xs sm:text-sm">
+                                  {recording.transcribing ? 'Transcribiendo...' : 'Transcribir'}
+                                </span>
+                              </Button>
+                              {recording.last_transcription_error && (
+                                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                                  Error: {recording.last_transcription_error}
+                                  {recording.transcription_attempts && (
+                                    <span className="block mt-1 text-gray-600">
+                                      Intentos: {recording.transcription_attempts}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
@@ -716,7 +807,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                   </div>
 
                   {recording.transcript && editingTranscriptId !== recording.id && (
-                    <div className="p-4">
+                    <div className="p-3 sm:p-4">
                       <TranscriptionDisplay
                         html={recording.transcript_formatted?.html}
                         plainText={recording.transcript}
@@ -729,7 +820,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                   )}
 
                   {editingTranscriptId === recording.id && (
-                    <div className="p-4 bg-gray-50">
+                    <div className="p-3 sm:p-4 bg-gray-50">
                       <RichTextEditor
                         initialValue={recording.transcript_formatted?.html || recording.transcript || ''}
                         onSave={async (html, plain) => {
@@ -778,6 +869,16 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         </div>
       )}
 
+      {/* Skip Warning Modal */}
+      <SkipWarningModal
+        isOpen={showSkipModal}
+        onClose={() => setShowSkipModal(false)}
+        onConfirm={handleConfirmSkip}
+        context="question"
+        showDontShowAgain={true}
+        onDontShowAgainChange={setSkipDontShowAgain}
+      />
+
       {/* Delete Confirmation Modal */}
       {deleteConfirmModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -795,6 +896,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 variant="outline"
                 onClick={() => setDeleteConfirmModal(null)}
                 fullWidth
+                disabled={isDeleting}
               >
                 Cancelar
               </Button>
@@ -802,8 +904,9 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 variant="danger"
                 onClick={confirmDelete}
                 fullWidth
+                disabled={isDeleting}
               >
-                Eliminar
+                {isDeleting ? 'Eliminando...' : 'Eliminar'}
               </Button>
             </div>
           </div>

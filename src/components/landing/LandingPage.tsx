@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BookHeart, ChevronDown, HelpCircle, Smile, Mic, Feather, Star, Heart, Shield, Users, Clock, Camera } from 'lucide-react';
-import { useAuthStore } from '../../store/authStore';
-import { validateEmail } from '../../lib/utils';
+import { supabase } from '../../lib/supabase';
+import AuthModal from '../auth/AuthModal';
 
 // Reusable Components
 const BenefitCard: React.FC<{ icon: React.ReactNode; title: string; description: string }> = ({ icon, title, description }) => (
@@ -37,181 +37,66 @@ const StarRating: React.FC<{ rating: number }> = ({ rating }) => {
   );
 };
 
-const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const { signIn } = useAuthStore();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (!validateEmail(email)) {
-      setError('Email inválido');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('La contraseña debe tener al menos 6 caracteres');
-      return;
-    }
-
-    setLoading(true);
-    const result = await signIn(email, password);
-    
-    if (result.success) {
-      onClose();
-    } else {
-      setError(result.error || 'Error al iniciar sesión');
-    }
-    setLoading(false);
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white/95 backdrop-blur-md rounded-lg p-6 w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-4 text-[#424B54]">Iniciar Sesión</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C57B57]"
-            required
-          />
-          <input
-            type="password"
-            placeholder="Contraseña"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C57B57]"
-            required
-          />
-          {error && <p className="text-red-600 text-sm">{error}</p>}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-[#C57B57] text-white py-2 rounded-lg hover:bg-[#B86A4A] transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Iniciando...' : 'Iniciar Sesión'}
-          </button>
-        </form>
-        <button
-          onClick={onClose}
-          className="mt-4 w-full text-gray-600 hover:text-gray-800"
-        >
-          Cancelar
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const RegisterModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const { signUp } = useAuthStore();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (!validateEmail(email)) {
-      setError('Email inválido');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('La contraseña debe tener al menos 6 caracteres');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Las contraseñas no coinciden');
-      return;
-    }
-
-    setLoading(true);
-    const result = await signUp(email, password);
-    
-    if (result.success) {
-      setError('Cuenta creada exitosamente. Puedes iniciar sesión ahora.');
-      setTimeout(() => {
-        onClose();
-        setError('');
-      }, 2000);
-    } else {
-      setError(result.error || 'Error al crear cuenta');
-    }
-    setLoading(false);
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white/95 backdrop-blur-md rounded-lg p-6 w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-4 text-[#424B54]">Crear Cuenta</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C57B57]"
-            required
-          />
-          <input
-            type="password"
-            placeholder="Contraseña"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C57B57]"
-            required
-          />
-          <input
-            type="password"
-            placeholder="Confirmar Contraseña"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C57B57]"
-            required
-          />
-          {error && (
-            <p className={`text-sm ${error.includes('exitosamente') ? 'text-green-600' : 'text-red-600'}`}>
-              {error}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-[#C57B57] text-white py-2 rounded-lg hover:bg-[#B86A4A] transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Creando...' : 'Crear Cuenta'}
-          </button>
-        </form>
-        <button
-          onClick={onClose}
-          className="mt-4 w-full text-gray-600 hover:text-gray-800"
-        >
-          Cancelar
-        </button>
-      </div>
-    </div>
-  );
-};
 
 const LandingPage: React.FC = () => {
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password'>('login');
+  const [heroImages, setHeroImages] = useState<any[]>([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [carouselSettings, setCarouselSettings] = useState({
+    transition_duration: 5000,
+    auto_play: true,
+    transition_effect: 'fade'
+  });
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchHeroCarousel();
+  }, []);
+
+  useEffect(() => {
+    if (!carouselSettings.auto_play || heroImages.length <= 1) return;
+
+    const interval = setInterval(() => {
+      setCurrentImageIndex((prev) => (prev + 1) % heroImages.length);
+    }, carouselSettings.transition_duration);
+
+    return () => clearInterval(interval);
+  }, [carouselSettings.auto_play, carouselSettings.transition_duration, heroImages.length]);
+
+  const fetchHeroCarousel = async () => {
+    try {
+      // Fetch active hero images
+      const { data: imagesData, error: imagesError } = await supabase
+        .from('hero_images')
+        .select('*')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+
+      if (imagesError) throw imagesError;
+
+      // Fetch carousel settings
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('carousel_settings')
+        .select('*')
+        .limit(1)
+        .maybeSingle();
+
+      if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
+
+      if (imagesData && imagesData.length > 0) {
+        setHeroImages(imagesData);
+      }
+
+      if (settingsData) {
+        setCarouselSettings(settingsData);
+      }
+    } catch (error) {
+      console.error('Error fetching hero carousel:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const howItWorksSteps = [
     {
@@ -271,18 +156,29 @@ const LandingPage: React.FC = () => {
     <div className="min-h-screen bg-[#F5EFE0] text-[#424B54] font-sans antialiased overflow-x-hidden">
       {/* Hero Section */}
       <section className="relative h-screen flex items-center justify-center overflow-hidden">
-        <div 
-          className="absolute inset-0 bg-cover bg-center"
-          style={{
-            backgroundImage: 'url(https://images.pexels.com/photos/3184306/pexels-photo-3184306.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1280&fit=crop)'
-          }}
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-900/80 via-blue-800/60 to-teal-800/80" />
-        </div>
+        {/* Carousel Background */}
+        {!isLoading && heroImages.length > 0 && (
+          <>
+            {heroImages.map((image, index) => (
+              <div
+                key={image.id}
+                className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${
+                  index === currentImageIndex ? 'opacity-100' : 'opacity-0'
+                }`}
+                style={{
+                  backgroundImage: `url(${image.image_url})`
+                }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/50 to-black/60" />
+              </div>
+            ))}
+          </>
+        )}
 
         {/* Logo - Top Left */}
-        <div className="absolute top-6 left-6 z-20">
-          <span className="text-2xl font-bold text-white">Ethernal</span>
+        <div className="absolute top-6 left-6 z-20 flex items-center space-x-3">
+          <BookHeart className="h-10 w-10 text-white" strokeWidth={2} />
+          <span className="text-3xl font-bold text-white tracking-tight">Ethernal</span>
         </div>
 
         {/* Content */}
@@ -300,20 +196,44 @@ const LandingPage: React.FC = () => {
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center animate-fade-in animation-delay-600">
             <button
-              onClick={() => setIsRegisterModalOpen(true)}
+              onClick={() => {
+                setAuthMode('register');
+                setAuthModalOpen(true);
+              }}
               className="bg-[#C57B57] text-white text-xl px-8 py-4 rounded-lg hover:bg-[#B86A4A] transition-all duration-200 shadow-lg hover:shadow-xl"
             >
               Empezar
             </button>
-            
+
             <button
-              onClick={() => setIsLoginModalOpen(true)}
+              onClick={() => {
+                setAuthMode('login');
+                setAuthModalOpen(true);
+              }}
               className="text-white hover:text-blue-200 underline"
             >
               ¿Ya tienes una cuenta? Inicia sesión
             </button>
           </div>
         </div>
+
+        {/* Carousel Navigation Dots */}
+        {!isLoading && heroImages.length > 1 && (
+          <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 z-20 flex space-x-2">
+            {heroImages.map((_, index) => (
+              <button
+                key={index}
+                onClick={() => setCurrentImageIndex(index)}
+                className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                  index === currentImageIndex
+                    ? 'bg-white w-8'
+                    : 'bg-white/50 hover:bg-white/75'
+                }`}
+                aria-label={`Go to image ${index + 1}`}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Scroll indicator */}
         <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 animate-bounce">
@@ -423,7 +343,10 @@ const LandingPage: React.FC = () => {
             No esperes más. Cada historia cuenta, cada recuerdo importa.
           </p>
           <button
-            onClick={() => setIsRegisterModalOpen(true)}
+            onClick={() => {
+              setAuthMode('register');
+              setAuthModalOpen(true);
+            }}
             className="bg-white text-blue-600 hover:bg-gray-100 text-xl font-semibold px-8 py-4 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl"
           >
             Obtén Ethernal Ahora
@@ -442,9 +365,13 @@ const LandingPage: React.FC = () => {
         </div>
       </footer>
 
-      {/* Modals */}
-      <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
-      <RegisterModal isOpen={isRegisterModalOpen} onClose={() => setIsRegisterModalOpen(false)} />
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        mode={authMode}
+        onSwitchMode={setAuthMode}
+      />
 
       {/* Global Styles */}
       <style jsx global>{`

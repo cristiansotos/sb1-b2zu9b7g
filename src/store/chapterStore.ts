@@ -4,6 +4,7 @@ import { Chapter, Recording, TranscriptFormatted } from '../types';
 import { optimizeImage, filterTranscript } from '../lib/utils';
 import { formatTranscript } from '../lib/paragraphUtils';
 import { calculateConfidenceScore, detectValidationIssues } from '../lib/audioValidation';
+import { requestDeduplicator } from '../lib/requestCache';
 
 interface ChapterState {
   chapters: Chapter[];
@@ -12,6 +13,7 @@ interface ChapterState {
   selectedChapterId: string | null;
   fetchChapters: (storyId: string) => Promise<void>;
   fetchRecordings: (chapterId: string) => Promise<void>;
+  fetchAllRecordingsForStory: (storyId: string) => Promise<void>;
   createRecording: (data: {
     chapterId: string;
     question: string;
@@ -126,12 +128,30 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         .from('recordings')
         .select('*')
         .eq('chapter_id', chapterId)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: true});
 
       if (error) throw error;
       set({ recordings: recordings || [] });
     } catch (error: any) {
       console.error('Error fetching recordings:', error);
+    }
+  },
+
+  fetchAllRecordingsForStory: async (storyId: string) => {
+    try {
+      const { data: recordings, error } = await supabase
+        .from('recordings')
+        .select(`
+          *,
+          chapters!inner(story_id)
+        `)
+        .eq('chapters.story_id', storyId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      set({ recordings: recordings || [] });
+    } catch (error: any) {
+      console.error('Error fetching all recordings:', error);
     }
   },
 
@@ -180,6 +200,12 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         recordings: [...state.recordings, recording]
       }));
 
+      // Update story progress after creating recording
+      const chapter = get().chapters.find(c => c.id === data.chapterId);
+      if (chapter) {
+        await get().updateStoryProgress(chapter.story_id);
+      }
+
       return { success: true };
     } catch (error: any) {
       console.error('Error creating recording:', error);
@@ -191,7 +217,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
     try {
       // First, get the recording to clean up storage if needed
       const recordingToDelete = get().recordings.find(r => r.id === recordingId);
-      
+
       const { error } = await supabase
         .from('recordings')
         .delete()
@@ -204,6 +230,14 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         recordings: state.recordings.filter(r => r.id !== recordingId)
       }));
 
+      // Update story progress after deleting recording
+      if (recordingToDelete?.chapter_id) {
+        const chapter = get().chapters.find(c => c.id === recordingToDelete.chapter_id);
+        if (chapter) {
+          await get().updateStoryProgress(chapter.story_id);
+        }
+      }
+
       return { success: true };
     } catch (error: any) {
       console.error('Delete recording error:', error);
@@ -213,23 +247,33 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
   transcribeRecording: async (recordingId) => {
     try {
+      const recording = get().recordings.find(r => r.id === recordingId);
+
+      // Validation checks
+      if (!recording) {
+        return { success: false, error: 'Grabación no encontrada' };
+      }
+
+      if (!recording.audio_url) {
+        return { success: false, error: 'URL de audio no disponible' };
+      }
+
+      // Check if already transcribing (prevent duplicate requests)
+      if (recording.transcribing) {
+        return { success: false, error: 'Transcripción ya en progreso' };
+      }
+
+      // Check if already has transcript
+      if (recording.transcript) {
+        return { success: false, error: 'Esta grabación ya tiene una transcripción. Elimínala primero si deseas volver a transcribir.' };
+      }
+
       // Update local state to show loading
       set(state => ({
         recordings: state.recordings.map(r =>
           r.id === recordingId ? { ...r, transcribing: true } : r
         )
       }));
-
-      const recording = get().recordings.find(r => r.id === recordingId);
-      if (!recording?.audio_url) {
-        // Reset loading state
-        set(state => ({
-          recordings: state.recordings.map(r =>
-            r.id === recordingId ? { ...r, transcribing: false } : r
-          )
-        }));
-        return { success: false, error: 'Grabación no encontrada' };
-      }
 
       // Fetch audio file
       const response = await fetch(recording.audio_url);
@@ -250,13 +294,14 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
       });
 
       if (!transcribeResponse.ok) {
+        const errorText = await transcribeResponse.text();
         // Reset loading state
         set(state => ({
           recordings: state.recordings.map(r =>
             r.id === recordingId ? { ...r, transcribing: false } : r
           )
         }));
-        throw new Error('Error en la transcripción');
+        throw new Error(`Error en la transcripción: ${transcribeResponse.status} - ${errorText}`);
       }
 
       const result = await transcribeResponse.json();
@@ -272,7 +317,7 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
       const { plain: formattedPlain, html: formattedHtml } = formatTranscript(filteredTranscript);
 
       // Calculate confidence score
-      const durationMs = recording.duration_ms || 0;
+      const durationMs = recording.audio_duration_ms || 0;
       const confidenceScore = calculateConfidenceScore(filteredTranscript, durationMs);
 
       // Detect validation issues
@@ -289,30 +334,39 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
       // Increment transcription attempts
       const currentAttempts = recording.transcription_attempts || 0;
 
-      // Update recording with transcript, formatting, metadata, and quality metrics
-      const { error } = await supabase
-        .from('recordings')
-        .update({
-          transcript: formattedPlain,
-          original_transcript: originalTranscript,
-          transcript_formatted: transcriptFormatted,
-          detected_language: detectedLanguage,
-          transcription_model: transcriptionModel,
-          confidence_score: confidenceScore,
-          validation_flags: validationFlags,
-          transcription_attempts: currentAttempts + 1,
-          last_transcription_error: null
-        })
-        .eq('id', recordingId);
+      // Use the dedicated RPC function to bypass RLS and avoid timeout
+      const { data: updateResult, error } = await supabase.rpc('update_recording_transcription', {
+        p_recording_id: recordingId,
+        p_transcript: formattedPlain,
+        p_original_transcript: originalTranscript,
+        p_transcript_formatted: transcriptFormatted,
+        p_detected_language: detectedLanguage,
+        p_transcription_model: transcriptionModel,
+        p_confidence_score: confidenceScore,
+        p_validation_flags: validationFlags,
+        p_transcription_attempts: currentAttempts + 1
+      });
 
-      if (error) {
+      if (error || (updateResult && !updateResult.success)) {
+        const errorMessage = error?.message || updateResult?.error || 'Unknown error';
+
+        // Save error to database
+        const currentAttempts = recording.transcription_attempts || 0;
+        await supabase
+          .from('recordings')
+          .update({
+            last_transcription_error: errorMessage,
+            transcription_attempts: currentAttempts + 1
+          })
+          .eq('id', recordingId);
+
         // Reset loading state
         set(state => ({
           recordings: state.recordings.map(r =>
             r.id === recordingId ? { ...r, transcribing: false } : r
           )
         }));
-        throw error;
+        throw new Error(errorMessage);
       }
 
       // Update local state
@@ -454,6 +508,12 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
       if (error) throw error;
 
+      // Update story progress after uploading image
+      const chapter = get().chapters.find(c => c.id === data.chapterId);
+      if (chapter) {
+        await get().updateStoryProgress(chapter.story_id);
+      }
+
       return { success: true };
     } catch (error: any) {
       console.error('Error uploading image:', error);
@@ -463,12 +523,27 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
   deleteQuestionImage: async (imageId) => {
     try {
+      // Get image info before deleting to find the chapter
+      const { data: imageToDelete } = await supabase
+        .from('images')
+        .select('chapter_id')
+        .eq('id', imageId)
+        .single();
+
       const { error } = await supabase
         .from('images')
         .delete()
         .eq('id', imageId);
 
       if (error) throw error;
+
+      // Update story progress after deleting image
+      if (imageToDelete?.chapter_id) {
+        const chapter = get().chapters.find(c => c.id === imageToDelete.chapter_id);
+        if (chapter) {
+          await get().updateStoryProgress(chapter.story_id);
+        }
+      }
 
       return { success: true };
     } catch (error: any) {
@@ -543,39 +618,20 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
   },
 
   updateStoryProgress: async (storyId: string) => {
-    try {
-      // Get all chapters for this story
-      const { data: chapters } = await supabase
-        .from('chapters')
-        .select('id, question_order')
-        .eq('story_id', storyId);
+    return requestDeduplicator.debounce(`updateStoryProgress:${storyId}`, async () => {
+      try {
+        const { error } = await supabase.rpc('update_story_progress', {
+          story_id_param: storyId
+        });
 
-      if (!chapters) return;
-
-      // Get all recordings for these chapters
-      const chapterIds = chapters.map(c => c.id);
-      const { data: recordings } = await supabase
-        .from('recordings')
-        .select('chapter_id, question')
-        .in('chapter_id', chapterIds);
-
-      // Calculate progress
-      const totalQuestions = chapters.reduce((sum, chapter) => 
-        sum + (chapter.question_order?.length || 0), 0
-      );
-
-      const answeredQuestions = recordings?.length || 0;
-      const progress = totalQuestions > 0 ? Math.round((answeredQuestions / totalQuestions) * 100) : 0;
-
-      // Update story progress
-      await supabase
-        .from('stories')
-        .update({ progress })
-        .eq('id', storyId);
-
-    } catch (error) {
-      console.error('Error updating story progress:', error);
-    }
+        if (error) {
+          console.error('Error updating story progress:', error);
+          return;
+        }
+      } catch (error) {
+        console.error('Error updating story progress:', error);
+      }
+    }, 500);
   },
 
   setSelectedChapter: (chapterId) => {

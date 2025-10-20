@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
+import { requestDeduplicator } from '../lib/requestCache';
 
 export interface Question {
   id: string;
@@ -61,14 +62,21 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
   fetchChapters: async () => {
     set({ loading: true, error: null });
     try {
-      const { data, error } = await supabase
-        .from('chapter_templates')
-        .select('*')
-        .order('order', { ascending: true });
+      const data = await requestDeduplicator.withCache(
+        'chapter_templates',
+        async () => {
+          const { data, error } = await supabase
+            .from('chapter_templates')
+            .select('*')
+            .order('order', { ascending: true });
 
-      if (error) throw error;
+          if (error) throw error;
+          return data || [];
+        },
+        60000
+      );
 
-      set({ chapters: data || [], loading: false });
+      set({ chapters: data, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });
     }
@@ -116,6 +124,7 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
 
       if (error) throw error;
 
+      requestDeduplicator.invalidateCache('chapter_templates');
       await get().fetchChapters();
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -133,6 +142,7 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
 
       if (error) throw error;
 
+      requestDeduplicator.invalidateCache('chapter_templates');
       await get().fetchChapters();
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -150,6 +160,7 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
 
       if (error) throw error;
 
+      requestDeduplicator.invalidateCache('chapter_templates');
       await get().fetchChapters();
     } catch (error: any) {
       set({ error: error.message, loading: false });
@@ -159,20 +170,17 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
 
   reorderChapters: async (chapters: Chapter[]) => {
     try {
-      const updates = chapters.map((chapter, index) => ({
-        id: chapter.id,
-        order: index,
-      }));
+      const ids = chapters.map(chapter => chapter.id);
+      const orders = chapters.map((_, index) => index);
 
-      for (const update of updates) {
-        const { error } = await supabase
-          .from('chapter_templates')
-          .update({ order: update.order })
-          .eq('id', update.id);
+      const { error } = await supabase.rpc('batch_reorder_chapter_templates', {
+        ids,
+        orders
+      });
 
-        if (error) throw error;
-      }
+      if (error) throw error;
 
+      requestDeduplicator.invalidateCache('chapter_templates');
       await get().fetchChapters();
     } catch (error: any) {
       set({ error: error.message });
@@ -224,19 +232,15 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
 
   reorderSections: async (chapterId: string, sections: Section[]) => {
     try {
-      const updates = sections.map((section, index) => ({
-        id: section.id,
-        order: index,
-      }));
+      const ids = sections.map(section => section.id);
+      const orders = sections.map((_, index) => index);
 
-      for (const update of updates) {
-        const { error } = await supabase
-          .from('section_templates')
-          .update({ order: update.order })
-          .eq('id', update.id);
+      const { error } = await supabase.rpc('batch_reorder_section_templates', {
+        ids,
+        orders
+      });
 
-        if (error) throw error;
-      }
+      if (error) throw error;
     } catch (error: any) {
       throw error;
     }
@@ -291,19 +295,15 @@ export const useChaptersStore = create<ChaptersState>((set, get) => ({
 
   reorderQuestions: async (questions: Question[]) => {
     try {
-      const updates = questions.map((question, index) => ({
-        id: question.id,
-        order: index,
-      }));
+      const ids = questions.map(question => question.id);
+      const orders = questions.map((_, index) => index);
 
-      for (const update of updates) {
-        const { error } = await supabase
-          .from('question_templates')
-          .update({ order: update.order })
-          .eq('id', update.id);
+      const { error } = await supabase.rpc('batch_reorder_question_templates', {
+        ids,
+        orders
+      });
 
-        if (error) throw error;
-      }
+      if (error) throw error;
     } catch (error: any) {
       throw error;
     }

@@ -30,7 +30,25 @@ Deno.serve(async (req: Request) => {
 
     if (!audioFile) {
       return new Response(
-        JSON.stringify({ error: "No audio file provided" }),
+        JSON.stringify({
+          error: "No se proporcionó archivo de audio",
+          details: "El archivo de audio es requerido para la transcripción"
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Validate file size (max 25MB for Whisper API)
+    const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+    if (audioFile.size > MAX_FILE_SIZE) {
+      return new Response(
+        JSON.stringify({
+          error: "Archivo demasiado grande",
+          details: `El archivo excede el tamaño máximo de 25MB (tamaño actual: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB)`
+        }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -43,9 +61,9 @@ Deno.serve(async (req: Request) => {
     if (!openaiApiKey) {
       console.error("OpenAI API key not found in environment variables");
       return new Response(
-        JSON.stringify({ 
-          error: "OpenAI API key not configured",
-          details: "Please add OPENAI_API_KEY to your Supabase Edge Function environment variables"
+        JSON.stringify({
+          error: "Configuración del servicio incompleta",
+          details: "La clave API de OpenAI no está configurada. Contacta al administrador."
         }),
         {
           status: 500,
@@ -89,14 +107,28 @@ Deno.serve(async (req: Request) => {
     if (!whisperResponse.ok) {
       const errorText = await whisperResponse.text();
       console.error("OpenAI API error:", errorText);
-      
+
+      let userMessage = "Error del servicio de transcripción";
+      let details = errorText;
+
+      if (whisperResponse.status === 429) {
+        userMessage = "Límite de solicitudes excedido";
+        details = "Demasiadas solicitudes. Por favor, espera unos minutos e intenta de nuevo.";
+      } else if (whisperResponse.status === 401) {
+        userMessage = "Error de autenticación";
+        details = "Problema con la configuración de la API. Contacta al administrador.";
+      } else if (whisperResponse.status >= 500) {
+        userMessage = "Servicio temporalmente no disponible";
+        details = "El servicio de transcripción no está disponible. Intenta de nuevo más tarde.";
+      }
+
       return new Response(
-        JSON.stringify({ 
-          error: "Transcription service error",
-          details: `OpenAI API returned ${whisperResponse.status}: ${errorText}`
+        JSON.stringify({
+          error: userMessage,
+          details: details
         }),
         {
-          status: 500,
+          status: whisperResponse.status,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
@@ -107,9 +139,9 @@ Deno.serve(async (req: Request) => {
 
     if (!transcript) {
       return new Response(
-        JSON.stringify({ 
-          error: "No transcript generated",
-          details: "OpenAI API did not return any text"
+        JSON.stringify({
+          error: "No se generó transcripción",
+          details: "El audio no contiene contenido transcribible o es demasiado corto"
         }),
         {
           status: 500,
@@ -133,11 +165,23 @@ Deno.serve(async (req: Request) => {
 
   } catch (error) {
     console.error("Transcription error:", error);
-    
+
+    let userMessage = "Error al procesar la transcripción";
+    let details = error.message;
+
+    // Check for common error types
+    if (error.name === "NetworkError" || error.message.includes("fetch")) {
+      userMessage = "Error de conexión";
+      details = "No se pudo conectar al servicio de transcripción. Verifica tu conexión a internet.";
+    } else if (error.message.includes("timeout")) {
+      userMessage = "Tiempo de espera agotado";
+      details = "La transcripción tomó demasiado tiempo. Intenta con un audio más corto.";
+    }
+
     return new Response(
-      JSON.stringify({ 
-        error: "Error processing transcription",
-        details: error.message 
+      JSON.stringify({
+        error: userMessage,
+        details: details
       }),
       {
         status: 500,

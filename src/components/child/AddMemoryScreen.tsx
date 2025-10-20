@@ -360,26 +360,27 @@ const AddMemoryScreen: React.FC = () => {
 
   return (
     <Layout>
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-4xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col xs:flex-row items-start xs:items-center justify-between mb-4 sm:mb-8 gap-3 xs:gap-0">
           <Button
             variant="ghost"
             icon={ArrowLeft}
             onClick={() => navigate(`/child-dashboard/${storyId}`)}
+            size="sm"
           >
-            Volver al Dashboard
+            <span className="text-sm">Volver</span>
           </Button>
-          
-          <h1 className="text-2xl font-bold text-gray-900">
+
+          <h1 className="text-lg sm:text-2xl font-bold text-gray-900">
             {editMemory ? 'Editar Recuerdo' : 'Nuevo Recuerdo'}
           </h1>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Core Fields */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
               <Input
                 label="Fecha del Recuerdo"
                 type="date"
@@ -397,24 +398,24 @@ const AddMemoryScreen: React.FC = () => {
               />
             </div>
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+            <div className="mb-3 sm:mb-4">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">
                 Notas
               </label>
               <textarea
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 placeholder="Describe este momento especial..."
-                rows={4}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                rows={3}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
 
             {/* Audio Recording Section */}
-            <div className="border-t border-gray-200 pt-4">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Grabación de Audio</h3>
-              
-              <div className="flex items-center space-x-3 mb-3">
+            <div className="border-t border-gray-200 pt-3 sm:pt-4">
+              <h3 className="text-xs sm:text-sm font-medium text-gray-700 mb-2 sm:mb-3">Grabación de Audio</h3>
+
+              <div className="flex flex-col xs:flex-row items-stretch xs:items-center gap-2 xs:space-x-3 mb-2 sm:mb-3">
                 {!isRecording && !audioBlob && (
                   <Button
                     type="button"
@@ -434,10 +435,11 @@ const AddMemoryScreen: React.FC = () => {
                       onClick={stopRecording}
                       variant="danger"
                       size="sm"
+                      className="w-full xs:w-auto"
                     >
-                      Grabando... (toca para parar)
+                      <span className="text-xs sm:text-sm">Grabando... (toca para parar)</span>
                     </Button>
-                    <span className="text-sm text-gray-600">
+                    <span className="text-xs sm:text-sm text-gray-600 text-center xs:text-left">
                       {formatDuration(recordingTime)}
                     </span>
                   </>
@@ -451,21 +453,23 @@ const AddMemoryScreen: React.FC = () => {
                       icon={isPlaying ? Pause : Play}
                       variant="secondary"
                       size="sm"
+                      className="flex-1 xs:flex-initial"
                     >
-                      {isPlaying ? 'Pausar' : 'Reproducir'}
+                      <span className="text-xs sm:text-sm">{isPlaying ? 'Pausar' : 'Reproducir'}</span>
                     </Button>
-                    
+
                     <Button
                       type="button"
                       onClick={clearRecording}
                       icon={Trash2}
                       variant="ghost"
                       size="sm"
+                      className="flex-1 xs:flex-initial"
                     >
-                      Descartar
+                      <span className="text-xs sm:text-sm">Descartar</span>
                     </Button>
-                    
-                    <span className="text-sm text-gray-600">
+
+                    <span className="text-xs sm:text-sm text-gray-600 text-center xs:text-left">
                       Grabación ({formatDuration(recordingTime)})
                     </span>
                   </>
@@ -482,16 +486,16 @@ const AddMemoryScreen: React.FC = () => {
           </div>
 
           {/* Expandable Sections */}
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
             {/* Photos Section */}
             <ExpandableSection
               title="Fotos"
-              icon={<Camera className="h-5 w-5 text-gray-600" />}
+              icon={<Camera className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />}
               isExpanded={expandedSections.photos}
               onToggle={() => toggleSection('photos')}
             >
-              <div className="space-y-4">
-                <div className="flex space-x-3">
+              <div className="space-y-3 sm:space-y-4">
+                <div className="flex gap-2 sm:space-x-3">
                   <Button
                     type="button"
                     onClick={startCamera}
@@ -515,13 +519,13 @@ const AddMemoryScreen: React.FC = () => {
 
                 {/* Image Previews */}
                 {imagePreviewUrls.length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
                     {imagePreviewUrls.map((url, index) => (
                       <div key={index} className="relative group">
                         <img
                           src={url}
                           alt={`Preview ${index + 1}`}
-                          className="w-full h-24 object-cover rounded-lg"
+                          className="w-full h-20 sm:h-24 object-cover rounded-lg"
                         />
                         <button
                           type="button"
@@ -549,11 +553,11 @@ const AddMemoryScreen: React.FC = () => {
             {/* Growth Section */}
             <ExpandableSection
               title="Crecimiento"
-              icon={<Ruler className="h-5 w-5 text-gray-600" />}
+              icon={<Ruler className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />}
               isExpanded={expandedSections.growth}
               onToggle={() => toggleSection('growth')}
             >
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
                 <Input
                   label="Altura (cm)"
                   type="number"
@@ -583,7 +587,7 @@ const AddMemoryScreen: React.FC = () => {
             {/* Place Section */}
             <ExpandableSection
               title="Lugar"
-              icon={<MapPin className="h-5 w-5 text-gray-600" />}
+              icon={<MapPin className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />}
               isExpanded={expandedSections.place}
               onToggle={() => toggleSection('place')}
             >
@@ -598,7 +602,7 @@ const AddMemoryScreen: React.FC = () => {
             {/* Achievement Section */}
             <ExpandableSection
               title="Logros"
-              icon={<Award className="h-5 w-5 text-gray-600" />}
+              icon={<Award className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />}
               isExpanded={expandedSections.achievement}
               onToggle={() => toggleSection('achievement')}
             >
@@ -683,7 +687,7 @@ const AddMemoryScreen: React.FC = () => {
             {/* Quote Section */}
             <ExpandableSection
               title="Cita"
-              icon={<Quote className="h-5 w-5 text-gray-600" />}
+              icon={<Quote className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />}
               isExpanded={expandedSections.quote}
               onToggle={() => toggleSection('quote')}
             >
@@ -712,16 +716,16 @@ const AddMemoryScreen: React.FC = () => {
           </div>
 
           {/* Tags Section */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Etiquetas</h3>
+          <div className="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
+            <h3 className="text-base sm:text-lg font-medium text-gray-900 mb-3 sm:mb-4">Etiquetas</h3>
             
-            <div className="flex flex-wrap gap-2 mb-4">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-3 sm:mb-4">
               {COMMON_TAGS.map((tag) => (
                 <button
                   key={`${tag.name}-${tag.type}`}
                   type="button"
                   onClick={() => toggleTag(tag)}
-                  className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                  className={`px-2.5 sm:px-3 py-1 rounded-full text-xs sm:text-sm transition-colors touch-manipulation ${
                     selectedTags.find(t => t.name === tag.name && t.type === tag.type)
                       ? 'bg-blue-500 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -754,33 +758,36 @@ const AddMemoryScreen: React.FC = () => {
           </div>
 
           {/* Save Buttons */}
-          <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+          <div className="flex flex-col sm:flex-row gap-3 sm:space-x-3 sm:gap-0">
             <Button
               onClick={() => handleSubmit(false)}
               loading={loading}
               icon={Save}
               fullWidth
+              className="order-1"
             >
-              {editMemory ? 'Guardar Cambios' : 'Guardar'}
+              <span className="text-sm sm:text-base">{editMemory ? 'Guardar Cambios' : 'Guardar'}</span>
             </Button>
-            
+
             {!editMemory && (
               <Button
                 onClick={() => handleSubmit(true)}
                 loading={loading}
                 variant="secondary"
                 fullWidth
+                className="order-2"
               >
-                Guardar y añadir otro
+                <span className="text-sm sm:text-base">Guardar y añadir otro</span>
               </Button>
             )}
-            
+
             <Button
               onClick={() => navigate(`/child-dashboard/${storyId}`)}
               variant="outline"
               fullWidth
+              className="order-3"
             >
-              Cancelar
+              <span className="text-sm sm:text-base">Cancelar</span>
             </Button>
           </div>
         </div>

@@ -28,14 +28,14 @@ const MemoryCard: React.FC<MemoryCardProps> = ({ memory, onEdit, onDelete }) => 
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-3">
+    <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-2 sm:mb-3">
         <div className="flex-1">
-          <h3 className="font-semibold text-gray-900 mb-1">{memory.title}</h3>
-          <p className="text-sm text-gray-500">{formatDate(memory.memory_date)}</p>
+          <h3 className="font-semibold text-sm sm:text-base text-gray-900 mb-1">{memory.title}</h3>
+          <p className="text-xs sm:text-sm text-gray-500">{formatDate(memory.memory_date)}</p>
         </div>
-        
-        <div className="flex items-center space-x-2">
+
+        <div className="flex items-center space-x-1.5 sm:space-x-2">
           <Button
             variant="ghost"
             size="sm"
@@ -57,11 +57,11 @@ const MemoryCard: React.FC<MemoryCardProps> = ({ memory, onEdit, onDelete }) => 
       </div>
 
       {memory.notes && (
-        <p className="text-sm text-gray-700 mb-3 line-clamp-2">{memory.notes}</p>
+        <p className="text-xs sm:text-sm text-gray-700 mb-2 sm:mb-3 line-clamp-2">{memory.notes}</p>
       )}
 
       {memory.is_quote && memory.quote_text && (
-        <blockquote className="text-sm italic text-blue-700 border-l-2 border-blue-200 pl-3 mb-3">
+        <blockquote className="text-xs sm:text-sm italic text-blue-700 border-l-2 border-blue-200 pl-2 sm:pl-3 mb-2 sm:mb-3">
           "{memory.quote_text}"
         </blockquote>
       )}
@@ -90,7 +90,7 @@ const MemoryCard: React.FC<MemoryCardProps> = ({ memory, onEdit, onDelete }) => 
             {memory.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag.id}
-                className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
+                className="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
               >
                 {tag.tag_name}
               </span>
@@ -128,6 +128,7 @@ const StoryDashboard: React.FC = () => {
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     if (stories.length === 0) {
@@ -200,46 +201,47 @@ const StoryDashboard: React.FC = () => {
 
   return (
     <Layout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4">
         {/* Header */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
           <Button
             variant="ghost"
             icon={ArrowLeft}
             onClick={() => navigate('/dashboard')}
+            size="sm"
           >
-            Volver
+            <span className="hidden sm:inline">Volver</span>
           </Button>
         </div>
 
         {/* Child Info Header with Edit Button */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 relative">
+        <div className="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-200 p-3 sm:p-4 mb-3 sm:mb-4 relative">
           <div className="flex items-center space-x-3">
             <div className="flex-shrink-0 relative">
               {story.photo_url ? (
                 <img
                   src={story.photo_url}
                   alt={story.title}
-                  className="w-12 h-12 rounded-full object-cover"
+                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover"
                 />
               ) : (
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-100 to-pink-100 flex items-center justify-center">
-                  <Baby className="h-6 w-6 text-orange-500" />
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-orange-100 to-pink-100 flex items-center justify-center">
+                  <Baby className="h-5 w-5 sm:h-6 sm:w-6 text-orange-500" />
                 </div>
               )}
             </div>
             
             <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-bold text-gray-900 truncate">
+              <h1 className="text-base sm:text-lg font-bold text-gray-900 truncate">
                 {story.title}
               </h1>
-              <div className="flex items-center space-x-3 text-sm text-gray-500">
+              <div className="flex items-center space-x-2 sm:space-x-3 text-xs sm:text-sm text-gray-500">
                 {story.date_of_birth && (
                   <span>{calculateAge(story.date_of_birth)}</span>
                 )}
-                <span className="inline-flex items-center px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-medium">
-                  <Baby className="h-3 w-3 mr-1" />
-                  Niño
+                <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-medium">
+                  <Baby className="h-3 w-3 mr-0.5 sm:mr-1" />
+                  <span className="hidden xs:inline">Niño</span>
                 </span>
                 <span>{stats.totalMemories} recuerdos</span>
               </div>
@@ -247,13 +249,13 @@ const StoryDashboard: React.FC = () => {
           </div>
           
           {/* Edit Button inside story card */}
-          <div className="absolute top-3 right-3">
+          <div className="absolute top-2 right-2 sm:top-3 sm:right-3">
             <Button
               variant="ghost"
               icon={Edit}
               size="sm"
               onClick={() => setShowSettingsMenu(!showSettingsMenu)}
-              className="h-8 w-8 p-0 hover:bg-gray-100"
+              className="h-9 w-9 sm:h-8 sm:w-8 p-0 hover:bg-gray-100"
             />
             
             {showSettingsMenu && (
@@ -279,22 +281,22 @@ const StoryDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Search Bar */}
         {/* Add Memory CTA */}
-        <div className="text-center mb-4">
+        <div className="mb-3 sm:mb-4">
           <Button
-            size="lg"
+            size="md"
             icon={Plus}
             onClick={() => navigate(`/add-memory/${storyId}`)}
-            className="bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white shadow-lg"
+            className="bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white shadow-lg w-full sm:w-auto"
+            fullWidth
           >
-            Añadir Nuevo Recuerdo
+            <span className="text-sm sm:text-base">Añadir Nuevo Recuerdo</span>
           </Button>
         </div>
 
         {/* View Toggle */}
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex space-x-2">
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
+          <div className="flex space-x-1.5 sm:space-x-2">
             <Button
               variant={viewMode === 'timeline' ? 'primary' : 'outline'}
               size="sm"
@@ -311,14 +313,14 @@ const StoryDashboard: React.FC = () => {
             </Button>
           </div>
           
-          <p className="text-sm text-gray-500">
+          <p className="text-xs sm:text-sm text-gray-500">
             {filteredMemories.length} recuerdo{filteredMemories.length !== 1 ? 's' : ''}
           </p>
         </div>
 
         {/* Memories List */}
         {viewMode === 'timeline' && (
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
             {filteredMemories.length > 0 ? (
               filteredMemories.map((memory) => (
                 <div key={memory.id} className="group">
@@ -333,25 +335,17 @@ const StoryDashboard: React.FC = () => {
               <div className="text-center py-12">
                 <Heart className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {searchTerm || Object.keys(filters).length > 1 
-                    ? 'No se encontraron recuerdos'
-                    : 'Aún no hay recuerdos'
-                  }
+                  Aún no hay recuerdos
                 </h3>
                 <p className="text-gray-600 mb-6">
-                  {searchTerm || Object.keys(filters).length > 1
-                    ? 'Intenta ajustar los filtros de búsqueda'
-                    : 'Comienza a documentar los momentos especiales'
-                  }
+                  Comienza a documentar los momentos especiales
                 </p>
-                {!searchTerm && Object.keys(filters).length <= 1 && (
-                  <Button
-                    onClick={() => navigate(`/add-memory/${storyId}`)}
-                    icon={Plus}
-                  >
-                    Crear Primer Recuerdo
-                  </Button>
-                )}
+                <Button
+                  onClick={() => navigate(`/add-memory/${storyId}`)}
+                  icon={Plus}
+                >
+                  Crear Primer Recuerdo
+                </Button>
               </div>
             )}
           </div>

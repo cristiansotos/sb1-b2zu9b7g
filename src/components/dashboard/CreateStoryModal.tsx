@@ -3,10 +3,13 @@ import { Camera, Upload, User } from 'lucide-react';
 import Modal from '../ui/Modal';
 import Input from '../ui/Input';
 import Button from '../ui/Button';
+import DatePicker from '../ui/DatePicker';
 import { RELATIONSHIPS } from '../../lib/constants';
 import { useStoryStore } from '../../store/storyStore';
+import { useFamilyGroupStore } from '../../store/familyGroupStore';
 import { validateDateOfBirth } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
+import FamilySelector from './FamilySelector';
 
 interface CreateStoryModalProps {
   isOpen: boolean;
@@ -17,9 +20,9 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
   const [formData, setFormData] = useState({
     title: '',
     relationship: '',
-    dateOfBirth: '',
-    mode: 'adult' as 'adult' | 'child'
+    dateOfBirth: ''
   });
+  const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([]);
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string>('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -27,14 +30,12 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  
+
   const { createStory } = useStoryStore();
+  const { familyGroups } = useFamilyGroupStore();
   const navigate = useNavigate();
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -44,65 +45,80 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
       setPhotoPreview(event.target?.result as string);
     };
     reader.readAsDataURL(file);
+
+    e.target.value = '';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
 
+    console.log('[CreateStoryModal] Submit started');
+    console.log('[CreateStoryModal] Selected families:', selectedFamilyIds);
+    console.log('[CreateStoryModal] Form data:', formData);
+
     // Validation
     const newErrors: Record<string, string> = {};
-    
+
     if (!formData.title.trim()) {
       newErrors.title = 'El título es requerido';
     } else if (formData.title.length > 100) {
       newErrors.title = 'El título no puede exceder 100 caracteres';
     }
-    
+
     if (!formData.relationship) {
       newErrors.relationship = 'La relación es requerida';
     }
-    
+
     const dateValidation = validateDateOfBirth(formData.dateOfBirth);
     if (!dateValidation.isValid) {
       newErrors.dateOfBirth = dateValidation.error!;
     }
 
+    if (selectedFamilyIds.length === 0) {
+      newErrors.families = 'Debes seleccionar al menos una familia';
+    }
+
     if (Object.keys(newErrors).length > 0) {
+      console.log('[CreateStoryModal] Validation errors:', newErrors);
       setErrors(newErrors);
       return;
     }
 
     setLoading(true);
-    
+
     try {
+      console.log('[CreateStoryModal] Calling createStory...');
       const result = await createStory({
         ...formData,
-        photo
+        mode: 'adult',
+        photo,
+        familyGroupIds: selectedFamilyIds
       });
 
+      console.log('[CreateStoryModal] Create story result:', result);
+
       if (result.success) {
+        console.log('[CreateStoryModal] Story created successfully, navigating to:', result.storyId);
         onClose();
-        // Navigate to appropriate view
-        if (formData.mode === 'child') {
-          navigate(`/child-dashboard/${result.storyId}`);
-        } else {
-          navigate(`/story-recorder/${result.storyId}`);
-        }
-        
+        // Navigate to story recorder
+        navigate(`/story-recorder/${result.storyId}`);
+
         // Reset form
         setFormData({
           title: '',
           relationship: '',
-          dateOfBirth: '',
-          mode: 'adult'
+          dateOfBirth: ''
         });
+        setSelectedFamilyIds([]);
         setPhoto(null);
         setPhotoPreview('');
       } else {
+        console.error('[CreateStoryModal] Story creation failed:', result.error);
         setErrors({ submit: result.error || 'Error desconocido' });
       }
     } catch (error) {
+      console.error('[CreateStoryModal] Exception during story creation:', error);
       setErrors({ submit: 'Error de conexión' });
     } finally {
       setLoading(false);
@@ -114,9 +130,9 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
     setFormData({
       title: '',
       relationship: '',
-      dateOfBirth: '',
-      mode: 'adult'
+      dateOfBirth: ''
     });
+    setSelectedFamilyIds([]);
     setPhoto(null);
     setPhotoPreview('');
     setErrors({});
@@ -146,34 +162,24 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
             )}
           </div>
           
-          <div className="flex space-x-3">
-            <Button
+          <div className="flex flex-col sm:flex-row gap-3 w-full justify-center px-4">
+            <button
               type="button"
-              variant="outline"
-              size="sm"
-              icon={Upload}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                fileInputRef.current?.click();
-              }}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center justify-center gap-2 px-6 py-3 border-2 border-gray-300 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors text-gray-700 font-medium"
             >
-              Galería
-            </Button>
+              <Upload className="h-5 w-5" />
+              <span>Galería</span>
+            </button>
 
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="sm"
-              icon={Camera}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                cameraInputRef.current?.click();
-              }}
+              onClick={() => cameraInputRef.current?.click()}
+              className="flex items-center justify-center gap-2 px-6 py-3 border-2 border-gray-300 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors text-gray-700 font-medium"
             >
-              Cámara
-            </Button>
+              <Camera className="h-5 w-5" />
+              <span>Cámara</span>
+            </button>
           </div>
 
           <input
@@ -182,7 +188,7 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
             accept="image/*"
             onChange={handlePhotoChange}
             className="hidden"
-            onClick={(e) => e.stopPropagation()}
+            aria-label="Seleccionar imagen de galería"
           />
 
           <input
@@ -192,7 +198,7 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
             capture="environment"
             onChange={handlePhotoChange}
             className="hidden"
-            onClick={(e) => e.stopPropagation()}
+            aria-label="Tomar foto con cámara"
           />
         </div>
 
@@ -232,56 +238,29 @@ const CreateStoryModal: React.FC<CreateStoryModalProps> = ({ isOpen, onClose }) 
           </div>
         </div>
 
-        <Input
+        <DatePicker
           label="Fecha de Nacimiento"
           value={formData.dateOfBirth}
-          onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+          onChange={(date) => setFormData({ ...formData, dateOfBirth: date })}
           error={errors.dateOfBirth}
-          placeholder="DD/MM/YYYY"
-          helperText="Formato: día/mes/año"
           required
         />
 
-        {/* Mode Selection */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-3">
-            Tipo de Historia
-          </label>
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              type="button"
-              onClick={() => setFormData({ ...formData, mode: 'adult' })}
-              className={`p-4 border-2 rounded-lg text-left transition-all ${
-                formData.mode === 'adult'
-                  ? 'border-blue-500 bg-blue-50 text-blue-900'
-                  : 'border-gray-300 hover:border-gray-400'
-              }`}
-            >
-              <h4 className="font-medium mb-1">Adulto</h4>
-              <p className="text-sm text-gray-600">
-                Para documentar la historia de vida completa
-              </p>
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => setFormData({ ...formData, mode: 'child' })}
-              className={`p-4 border-2 rounded-lg text-left transition-all ${
-                formData.mode === 'child'
-                  ? 'border-orange-500 bg-orange-50 text-orange-900'
-                  : 'border-gray-300 hover:border-gray-400'
-              }`}
-            >
-              <h4 className="font-medium mb-1">Niño</h4>
-              <p className="text-sm text-gray-600">
-                Para seguir el crecimiento y momentos especiales
-              </p>
-            </button>
-          </div>
-        </div>
+        <FamilySelector
+          availableFamilies={familyGroups}
+          selectedFamilyIds={selectedFamilyIds}
+          onChange={setSelectedFamilyIds}
+          maxSelections={4}
+          error={errors.families}
+          mode="checkbox"
+          label="Familias"
+          required
+        />
 
-        {errors.submit && (
-          <div className="text-red-600 text-sm">{errors.submit}</div>
+        {(errors.submit || errors.general) && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
+            {errors.submit || errors.general}
+          </div>
         )}
 
         <div className="flex space-x-3 pt-4">

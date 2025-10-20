@@ -8,6 +8,8 @@ interface AuthState {
   isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   signUp: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   initialize: () => Promise<void>;
   updateUserBookInterest: (interested: boolean) => Promise<void>;
@@ -46,7 +48,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (error) {
-        // Handle specific error cases
         if (error.message.includes('User already registered')) {
           return { success: false, error: 'Este email ya está registrado. Intenta iniciar sesión.' };
         }
@@ -56,6 +57,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return { success: true };
     } catch (error) {
       return { success: false, error: 'Error de conexión' };
+    }
+  },
+
+  signInWithGoogle: async () => {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/dashboard`
+        }
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Error de conexión con Google' };
+    }
+  },
+
+  resetPassword: async (email: string) => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Error al enviar el correo' };
     }
   },
 

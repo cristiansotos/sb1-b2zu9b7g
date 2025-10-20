@@ -6,6 +6,8 @@ import Button from '../ui/Button';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import { useStoryStore } from '../../store/storyStore';
 import { useChapterStore } from '../../store/chapterStore';
+import { useQuestionStateStore } from '../../store/questionStateStore';
+import { supabase } from '../../lib/supabase';
 import { formatDate, calculateAge } from '../../lib/utils';
 import ChapterNavigation from './ChapterNavigation';
 import QuestionCard from './QuestionCard';
@@ -15,13 +17,14 @@ const StoryRecorder: React.FC = () => {
   const { storyId } = useParams<{ storyId: string }>();
   const navigate = useNavigate();
   const { stories, loading: storiesLoading, fetchStories } = useStoryStore();
-  const { 
-    chapters, 
-    recordings, 
-    loading: chaptersLoading, 
+  const {
+    chapters,
+    recordings,
+    loading: chaptersLoading,
     selectedChapterId,
-    fetchChapters, 
+    fetchChapters,
     fetchRecordings,
+    fetchAllRecordingsForStory,
     transcribeRecording,
     setSelectedChapter,
     updateStoryProgress
@@ -30,6 +33,9 @@ const StoryRecorder: React.FC = () => {
   const [untranscribedCount, setUntranscribedCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [initialNavigationDone, setInitialNavigationDone] = useState(false);
+
+  const { findFirstIncompleteQuestion, fetchQuestionStates } = useQuestionStateStore();
 
   useEffect(() => {
     if (stories.length === 0) {
@@ -41,24 +47,47 @@ const StoryRecorder: React.FC = () => {
     if (storyId && stories.length > 0) {
       const foundStory = stories.find(s => s.id === storyId);
       setStory(foundStory || null);
-      
+
       if (foundStory) {
-        fetchChapters(storyId);
+        // Fetch chapters and ALL recordings in parallel immediately
+        Promise.all([
+          fetchChapters(storyId),
+          fetchAllRecordingsForStory(storyId),
+          fetchQuestionStates(storyId)
+        ]);
       }
     }
-  }, [storyId, stories]);
+  }, [storyId, stories, fetchChapters, fetchAllRecordingsForStory, fetchQuestionStates]);
 
   useEffect(() => {
-    if (chapters.length > 0 && !selectedChapterId) {
-      setSelectedChapter(chapters[0].id);
-    }
-  }, [chapters, selectedChapterId, setSelectedChapter]);
+    const initializeChapterNavigation = async () => {
+      if (chapters.length > 0 && !selectedChapterId && storyId && !initialNavigationDone) {
+        const firstIncomplete = await findFirstIncompleteQuestion(storyId, chapters);
 
-  useEffect(() => {
-    if (selectedChapterId) {
-      fetchRecordings(selectedChapterId);
-    }
-  }, [selectedChapterId, fetchRecordings]);
+        if (firstIncomplete) {
+          setSelectedChapter(firstIncomplete.chapterId);
+
+          setTimeout(() => {
+            const questionCards = document.querySelectorAll('[data-question]');
+            if (questionCards[firstIncomplete.questionIndex]) {
+              questionCards[firstIncomplete.questionIndex].scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+              });
+            }
+          }, 500);
+        } else {
+          setSelectedChapter(chapters[0].id);
+        }
+
+        setInitialNavigationDone(true);
+      }
+    };
+
+    initializeChapterNavigation();
+  }, [chapters, selectedChapterId, setSelectedChapter, storyId, initialNavigationDone, findFirstIncompleteQuestion]);
+
+  // Removed - all recordings are fetched upfront, no need to refetch per chapter
 
   useEffect(() => {
     const count = recordings.filter(r => !r.transcript).length;
@@ -66,9 +95,19 @@ const StoryRecorder: React.FC = () => {
   }, [recordings]);
 
   const handleRecordingComplete = async () => {
-    if (storyId) {
+    if (storyId && story) {
       await updateStoryProgress(storyId);
-      await fetchStories(); // Refresh story data to update progress
+
+      // Update only the current story's progress locally without full refetch
+      const { data: updatedStory } = await supabase
+        .from('stories')
+        .select('progress')
+        .eq('id', storyId)
+        .single();
+
+      if (updatedStory) {
+        setStory({ ...story, progress: updatedStory.progress });
+      }
     }
   };
 
@@ -138,7 +177,8 @@ const StoryRecorder: React.FC = () => {
     r.chapter_id === selectedChapterId && !r.transcript
   );
 
-  if (storiesLoading || chaptersLoading) {
+  // Only show loading spinner on very first load when we have absolutely no data
+  if ((storiesLoading || chaptersLoading) && !story && stories.length === 0) {
     return (
       <Layout>
         <div className="flex justify-center items-center min-h-screen">
@@ -366,14 +406,16 @@ const StoryRecorder: React.FC = () => {
               </div>
             </div>
 
-            {currentQuestions.map((question) => (
-              <QuestionCard
-                key={question}
-                chapterId={selectedChapterId}
-                question={question}
-                recordings={recordings}
-                onRecordingComplete={handleRecordingComplete}
-              />
+            {currentQuestions.map((question, index) => (
+              <div key={question} data-question={index}>
+                <QuestionCard
+                  storyId={storyId!}
+                  chapterId={selectedChapterId}
+                  question={question}
+                  recordings={recordings}
+                  onRecordingComplete={handleRecordingComplete}
+                />
+              </div>
             ))}
 
             {currentQuestions.length === 0 && (

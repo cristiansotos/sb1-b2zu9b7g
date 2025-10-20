@@ -36,16 +36,16 @@ const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto" onClick={handleBackdropClick}>
+    <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex min-h-screen items-center justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         <div
           className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
+          onClick={handleBackdropClick}
         />
 
         <div
-          className={`inline-block transform overflow-hidden rounded-lg bg-white px-6 py-6 text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:align-middle ${maxWidthClasses[maxWidth]}`}
-          onClick={(e) => e.stopPropagation()}
+          className={`inline-block transform overflow-hidden rounded-lg bg-white px-6 py-6 text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:align-middle ${maxWidthClasses[maxWidth]} relative z-10`}
         >
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-semibold text-gray-900">

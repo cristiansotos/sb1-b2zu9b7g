@@ -6,7 +6,8 @@ export interface User {
 
 export interface Story {
   id: string;
-  user_id: string;
+  user_id: string; // Deprecated: kept for backward compatibility
+  created_by?: string;
   title: string;
   relationship: string;
   photo_url?: string;
@@ -16,6 +17,94 @@ export interface Story {
   date_of_birth?: string;
   created_at: string;
   updated_at: string;
+}
+
+export type FamilyRole = 'owner' | 'editor' | 'viewer';
+
+export interface FamilyGroup {
+  id: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+  settings?: Record<string, any>;
+}
+
+export interface FamilyMember {
+  id: string;
+  family_group_id: string;
+  user_id: string;
+  role: FamilyRole;
+  invited_by?: string;
+  joined_at: string;
+  user?: User;
+}
+
+export interface StoryFamilyGroup {
+  id: string;
+  story_id: string;
+  family_group_id: string;
+  added_by?: string;
+  added_at: string;
+  family?: FamilyGroup;
+}
+
+export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'cancelled';
+
+export interface FamilyInvitation {
+  id: string;
+  family_group_id: string;
+  email: string;
+  role: FamilyRole;
+  invited_by?: string;
+  token: string;
+  expires_at: string;
+  status: InvitationStatus;
+  accepted_at?: string;
+  created_at: string;
+  inviter?: User;
+  family?: FamilyGroup;
+}
+
+export type PermissionKey =
+  | 'story.create'
+  | 'story.edit.own'
+  | 'story.edit.all'
+  | 'story.delete.own'
+  | 'story.delete.all'
+  | 'story.associate'
+  | 'recording.add'
+  | 'recording.edit'
+  | 'recording.delete'
+  | 'image.add'
+  | 'image.delete'
+  | 'member.invite'
+  | 'member.invite.owner'
+  | 'member.invite.editor'
+  | 'member.invite.viewer'
+  | 'member.remove'
+  | 'member.change_role'
+  | 'family.edit'
+  | 'family.delete'
+  | 'content.view'
+  | 'content.export';
+
+export interface RolePermission {
+  id: string;
+  role_name: FamilyRole;
+  permission_key: PermissionKey;
+  is_enabled: boolean;
+  updated_by?: string;
+  updated_at: string;
+}
+
+export interface FamilyGroupWithMembers extends FamilyGroup {
+  members: FamilyMember[];
+  member_count: number;
+  user_role: FamilyRole;
+}
+
+export interface StoryWithFamilies extends Story {
+  families: StoryFamilyGroup[];
 }
 
 export interface Chapter {
@@ -44,7 +133,7 @@ export interface Recording {
   transcript?: string;
   transcript_formatted?: TranscriptFormatted;
   has_speech_detected: boolean;
-  duration_ms?: number;
+  audio_duration_ms?: number;
   silence_ratio?: number;
   audio_energy_average?: number;
   confidence_score?: number;

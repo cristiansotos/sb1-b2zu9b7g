@@ -1,75 +1,113 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Settings } from 'lucide-react';
+import { Plus, Settings, UserCircle } from 'lucide-react';
 import Layout from '../layout/Layout';
 import Button from '../ui/Button';
 import StoryCard from './StoryCard';
 import CreateStoryModal from './CreateStoryModal';
 import LoadingSpinner from '../ui/LoadingSpinner';
+import FamilySelector from '../family/FamilySelector';
+import CreateFamilyModal from '../family/CreateFamilyModal';
+import FamilyManagementModal from '../family/FamilyManagementModal';
+import ProfileSettings from './ProfileSettings';
 import { useAuthStore } from '../../store/authStore';
 import { useStoryStore } from '../../store/storyStore';
+import { useFamilyGroupStore } from '../../store/familyGroupStore';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
 const Dashboard: React.FC = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isCreateFamilyModalOpen, setIsCreateFamilyModalOpen] = useState(false);
+  const [managingFamilyId, setManagingFamilyId] = useState<string | null>(null);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [userFirstName, setUserFirstName] = useState<string | null>(null);
   const { user, isAdmin, signOut } = useAuthStore();
-  const { stories, loading, fetchStories } = useStoryStore();
+  const { stories, loading, fetchStoriesForFamily } = useStoryStore();
+  const { familyGroups, activeFamilyId, fetchFamilyGroups, getActiveFamily } = useFamilyGroupStore();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchStories();
-  }, [fetchStories]);
+  const activeFamily = getActiveFamily();
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        fetchStories();
-      }
-    };
+    fetchFamilyGroups();
+    loadUserProfile();
+  }, [fetchFamilyGroups]);
 
-    const handleFocus = () => {
-      fetchStories();
-    };
+  const loadUserProfile = async () => {
+    if (!user) return;
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
+    const { data } = await supabase
+      .from('user_profiles')
+      .select('first_name')
+      .eq('id', user.id)
+      .maybeSingle();
 
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [fetchStories]);
+    if (data?.first_name) {
+      setUserFirstName(data.first_name);
+    }
+  };
+
+  useEffect(() => {
+    if (activeFamilyId) {
+      fetchStoriesForFamily(activeFamilyId);
+    }
+  }, [activeFamilyId, fetchStoriesForFamily]);
 
   return (
     <Layout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              ¡Hola, {user?.email?.split('@')[0]}!
-            </h1>
-            <p className="text-gray-600">
-              Gestiona y crea las historias de tu familia
-            </p>
-          </div>
+        <div className="flex flex-col space-y-4 mb-4 sm:mb-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+            <div className="mb-3 sm:mb-0">
+              <h1 className="text-xl sm:text-3xl font-bold text-gray-900 mb-1 sm:mb-2">
+                ¡Hola, {userFirstName || user?.email}!
+              </h1>
+              <p className="text-sm sm:text-base text-gray-600">
+                Gestiona y crea las historias de tu familia
+              </p>
+            </div>
 
-          <div className="flex items-center space-x-3 mt-4 sm:mt-0">
+            <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto">
+            <Button
+              variant="outline"
+              icon={UserCircle}
+              onClick={() => setShowProfileSettings(!showProfileSettings)}
+              size="sm"
+              className="flex-1 sm:flex-initial"
+            >
+              <span className="hidden sm:inline">Perfil</span>
+            </Button>
+
             {isAdmin && (
               <Button
                 variant="outline"
                 icon={Settings}
                 onClick={() => navigate('/admin')}
+                size="sm"
+                className="flex-1 sm:flex-initial"
               >
-                Admin
+                <span className="hidden sm:inline">Admin</span>
               </Button>
             )}
-            
+
             <Button
               variant="ghost"
               onClick={signOut}
+              size="sm"
+              className="flex-1 sm:flex-initial"
             >
-              Cerrar Sesión
+              <span className="text-xs sm:text-sm">Cerrar Sesión</span>
             </Button>
+          </div>
+          </div>
+
+          {/* Family Selector */}
+          <div>
+            <FamilySelector
+              onManageFamily={(familyId) => setManagingFamilyId(familyId)}
+              onCreateFamily={() => setIsCreateFamilyModalOpen(true)}
+            />
           </div>
         </div>
 
@@ -79,19 +117,19 @@ const Dashboard: React.FC = () => {
             <LoadingSpinner message="Cargando historias..." />
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {/* Create Story Card */}
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="group relative bg-gradient-to-br from-blue-50 to-teal-50 border-2 border-dashed border-blue-300 rounded-xl p-6 hover:border-blue-400 hover:shadow-md transition-all duration-200 h-64 flex flex-col items-center justify-center"
+              className="group relative bg-gradient-to-br from-blue-50 to-teal-50 border-2 border-dashed border-blue-300 rounded-lg sm:rounded-xl p-4 sm:p-6 hover:border-blue-400 hover:shadow-md transition-all duration-200 h-56 sm:h-64 flex flex-col items-center justify-center touch-manipulation"
             >
-              <div className="bg-blue-100 rounded-full p-4 mb-4 group-hover:bg-blue-200 transition-colors">
-                <Plus className="h-8 w-8 text-blue-600" />
+              <div className="bg-blue-100 rounded-full p-3 sm:p-4 mb-3 sm:mb-4 group-hover:bg-blue-200 transition-colors">
+                <Plus className="h-6 w-6 sm:h-8 sm:w-8 text-blue-600" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1.5 sm:mb-2">
                 Crear nueva historia
               </h3>
-              <p className="text-sm text-gray-600 text-center">
+              <p className="text-xs sm:text-sm text-gray-600 text-center">
                 Comienza a documentar los recuerdos de un ser querido
               </p>
             </button>
@@ -125,6 +163,27 @@ const Dashboard: React.FC = () => {
       <CreateStoryModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+      />
+
+      <CreateFamilyModal
+        isOpen={isCreateFamilyModalOpen}
+        onClose={() => setIsCreateFamilyModalOpen(false)}
+      />
+
+      {managingFamilyId && (
+        <FamilyManagementModal
+          isOpen={true}
+          onClose={() => setManagingFamilyId(null)}
+          familyGroupId={managingFamilyId}
+        />
+      )}
+
+      <ProfileSettings
+        isOpen={showProfileSettings}
+        onClose={() => {
+          setShowProfileSettings(false);
+          loadUserProfile();
+        }}
       />
     </Layout>
   );

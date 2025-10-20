@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Users, BookOpen, MessageSquare, BarChart3, Settings, Download, Search, Eye, UserX, UserCheck, Key, Trash2, ChevronUp, ChevronDown, Image, Upload, EyeOff, Save, Mic, Camera, Brain, Plus, ToggleRight, ToggleLeft, RefreshCw, FileText, List } from 'lucide-react';
+import { ArrowLeft, Users, BookOpen, MessageSquare, BarChart3, Settings, Download, Search, Eye, UserX, UserCheck, Key, Trash2, ChevronUp, ChevronDown, Image, Upload, EyeOff, Save, Brain, RefreshCw, FileText, List, Camera, Mic } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../layout/Layout';
 import Button from '../ui/Button';
@@ -11,6 +11,7 @@ import { supabase } from '../../lib/supabase';
 import { ChaptersManager } from './ChaptersManager';
 import { AIModelSettings } from './AIModelSettings';
 import { AudioQualitySettings } from './AudioQualitySettings';
+import RolePermissionsManager from './RolePermissionsManager';
 
 interface AdminStats {
   totalUsers: number;
@@ -33,41 +34,11 @@ interface AdminUser {
   is_active: boolean;
 }
 
-interface Story {
-  id: string;
-  title: string;
-  user_id: string;
-  progress: number;
-  created_at: string;
-  user_email?: string;
-}
-
 interface Feedback {
   id: string;
   user_email: string;
   message: string;
   created_at: string;
-}
-
-interface Recording {
-  id: string;
-  chapter_id: string;
-  question: string;
-  audio_url?: string;
-  duration_ms?: number;
-  created_at: string;
-  user_email?: string;
-  story_title?: string;
-}
-
-interface Image {
-  id: string;
-  chapter_id: string;
-  question: string;
-  image_url: string;
-  created_at: string;
-  user_email?: string;
-  story_title?: string;
 }
 
 interface ConfirmationModal {
@@ -81,13 +52,13 @@ interface ConfirmationModal {
 
 type AdminTab =
   | 'users'
-  | 'content'
   | 'chapters-questions'
   | 'hero-carousel'
   | 'ai-config'
   | 'analytics'
   | 'feedback'
-  | 'internal-notes';
+  | 'internal-notes'
+  | 'role-permissions';
 
 const AdminPanel: React.FC = () => {
   const navigate = useNavigate();
@@ -104,10 +75,8 @@ const AdminPanel: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<keyof AdminUser>('email');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [stories, setStories] = useState<Story[]>([]);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
-  const [contentSubTab, setContentSubTab] = useState<'stories' | 'recordings' | 'images'>('stories');
   const [heroImages, setHeroImages] = useState([]);
   const [aiConfigTab, setAiConfigTab] = useState<'audio_transcripts' | 'audio_quality' | 'memory_writing'>('audio_transcripts');
   const [aiModels, setAiModels] = useState([]);
@@ -126,7 +95,8 @@ const AdminPanel: React.FC = () => {
     newStoriesWeek: 0,
     newRecordingsWeek: 0,
     storageUsage: { total: 0, audio: 0, images: 0 },
-    topStorageUsers: []
+    topStorageUsers: [],
+    monthlyGrowth: [] as { month: string; users: number; stories: number; recordings: number }[]
   });
   const [carouselSettings, setCarouselSettings] = useState({
     transition_duration: 5000,
@@ -135,9 +105,6 @@ const AdminPanel: React.FC = () => {
   });
   const [heroLoading, setHeroLoading] = useState(false);
   const [settingsChanged, setSettingsChanged] = useState(false);
-  const [recordings, setRecordings] = useState<Recording[]>([]);
-  const [images, setImages] = useState<Image[]>([]);
-  const [contentSearchTerm, setContentSearchTerm] = useState('');
   const [confirmModal, setConfirmModal] = useState<ConfirmationModal>({
     isOpen: false,
     title: '',
@@ -203,9 +170,7 @@ const AdminPanel: React.FC = () => {
 
       // Fetch detailed user data with metrics
       await fetchDetailedUsers();
-      
-      // Fetch detailed content data
-      await fetchContentData();
+
       if (feedbackResult.data) setFeedback(feedbackResult.data);
 
       await fetchHeroImages();
@@ -263,9 +228,12 @@ const AdminPanel: React.FC = () => {
 
   const fetchAnalytics = async () => {
     try {
+      // Get auth users for accurate count
+      const { data: { users: authUsers } } = await supabase.auth.admin.listUsers();
+      const totalUsersCount = authUsers?.length || 0;
+
       // Get basic counts
-      const [usersCount, storiesCount, recordingsCount, imagesCount] = await Promise.all([
-        supabase.from('users').select('*', { count: 'exact', head: true }),
+      const [storiesCount, recordingsCount, imagesCount] = await Promise.all([
         supabase.from('stories').select('*', { count: 'exact', head: true }),
         supabase.from('recordings').select('*', { count: 'exact', head: true }),
         supabase.from('images').select('*', { count: 'exact', head: true })
@@ -275,36 +243,75 @@ const AdminPanel: React.FC = () => {
       const { data: progressData } = await supabase
         .from('stories')
         .select('progress');
-      
-      const avgProgress = progressData?.length > 0 
-        ? progressData.reduce((sum, story) => sum + (story.progress || 0), 0) / progressData.length 
+
+      const avgProgress = progressData?.length > 0
+        ? progressData.reduce((sum, story) => sum + (story.progress || 0), 0) / progressData.length
         : 0;
 
       // Get weekly trends (last 7 days)
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
-      
-      const [newUsers, newStories, newRecordings] = await Promise.all([
-        supabase.from('users').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo.toISOString()),
+
+      // Count new users in last week
+      const newUsersWeek = authUsers?.filter(u => new Date(u.created_at) >= weekAgo).length || 0;
+
+      const [newStories, newRecordings] = await Promise.all([
         supabase.from('stories').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo.toISOString()),
         supabase.from('recordings').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo.toISOString())
       ]);
+
+      // Calculate monthly growth for last 6 months
+      const monthlyGrowth = [];
+      const now = new Date();
+
+      for (let i = 5; i >= 0; i--) {
+        const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const nextMonthDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+        const monthName = monthDate.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+
+        // Count users created in this month
+        const monthUsers = authUsers?.filter(u => {
+          const created = new Date(u.created_at);
+          return created >= monthDate && created < nextMonthDate;
+        }).length || 0;
+
+        // Count stories in this month
+        const { count: monthStories } = await supabase
+          .from('stories')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', monthDate.toISOString())
+          .lt('created_at', nextMonthDate.toISOString());
+
+        // Count recordings in this month
+        const { count: monthRecordings } = await supabase
+          .from('recordings')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', monthDate.toISOString())
+          .lt('created_at', nextMonthDate.toISOString());
+
+        monthlyGrowth.push({
+          month: monthName,
+          users: monthUsers,
+          stories: monthStories || 0,
+          recordings: monthRecordings || 0
+        });
+      }
 
       // Get storage usage (estimated)
       const { data: recordingsWithDuration } = await supabase
         .from('recordings')
         .select('audio_duration_ms');
 
-      const audioStorage = recordingsWithDuration?.reduce((sum, r) => sum + ((r.audio_duration_ms || 0) / 1000 * 0.1), 0) || 0; // Estimate 0.1MB per second
-      const imageStorage = (imagesCount.count || 0) * 0.5; // Estimate 0.5MB per image
-      
+      const audioStorage = recordingsWithDuration?.reduce((sum, r) => sum + ((r.audio_duration_ms || 0) / 1000 * 0.1), 0) || 0;
+      const imageStorage = (imagesCount.count || 0) * 0.5;
+
       setAnalytics({
-        totalUsers: usersCount.count || 0,
+        totalUsers: totalUsersCount,
         totalStories: storiesCount.count || 0,
         totalRecordings: recordingsCount.count || 0,
         totalImages: imagesCount.count || 0,
         averageProgress: Math.round(avgProgress),
-        newUsersWeek: newUsers.count || 0,
+        newUsersWeek,
         newStoriesWeek: newStories.count || 0,
         newRecordingsWeek: newRecordings.count || 0,
         storageUsage: {
@@ -312,115 +319,64 @@ const AdminPanel: React.FC = () => {
           audio: audioStorage,
           images: imageStorage
         },
-        topStorageUsers: [] // TODO: Implement detailed user storage analysis
+        topStorageUsers: [],
+        monthlyGrowth
       });
     } catch (error) {
       console.error('Error fetching analytics:', error);
     }
   };
 
-  const fetchContentData = async () => {
-    try {
-      // Fetch stories with user emails
-      const { data: storiesData, error: storiesError } = await supabase
-        .from('stories')
-        .select(`
-          id,
-          title,
-          relationship,
-          progress,
-          created_at,
-          user_id,
-          users!inner(email)
-        `)
-        .order('created_at', { ascending: false });
-
-      if (storiesError) throw storiesError;
-
-      const storiesWithEmails = storiesData?.map(story => ({
-        ...story,
-        user_email: story.users?.email || 'Unknown'
-      })) || [];
-
-      setStories(storiesWithEmails);
-
-      // Fetch recordings with related data
-      const { data: recordingsData, error: recordingsError } = await supabase
-        .from('recordings')
-        .select(`
-          id,
-          chapter_id,
-          question,
-          audio_url,
-          audio_duration_ms,
-          created_at,
-          chapters!inner(
-            story_id,
-            stories!inner(
-              title,
-              users!inner(email)
-            )
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (recordingsError) throw recordingsError;
-
-      const recordingsWithDetails = recordingsData?.map(recording => ({
-        ...recording,
-        user_email: recording.chapters?.stories?.users?.email || 'Unknown',
-        story_title: recording.chapters?.stories?.title || 'Unknown'
-      })) || [];
-
-      setRecordings(recordingsWithDetails);
-
-      // Fetch images with related data
-      const { data: imagesData, error: imagesError } = await supabase
-        .from('images')
-        .select(`
-          id,
-          chapter_id,
-          question,
-          image_url,
-          created_at,
-          chapters!inner(
-            story_id,
-            stories!inner(
-              title,
-              users!inner(email)
-            )
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (imagesError) throw imagesError;
-
-      const imagesWithDetails = imagesData?.map(image => ({
-        ...image,
-        user_email: image.chapters?.stories?.users?.email || 'Unknown',
-        story_title: image.chapters?.stories?.title || 'Unknown'
-      })) || [];
-
-      setImages(imagesWithDetails);
-
-    } catch (error) {
-      console.error('Error fetching content data:', error);
-    }
-  };
 
   const fetchDetailedUsers = async () => {
     try {
-      // Get users first
-      const { data: usersData, error: usersError } = await supabase
-        .from('users')
-        .select('id, email, created_at');
+      // Get all authenticated users from auth.users
+      const { data: { users: authUsers }, error: authError } = await supabase.auth.admin.listUsers();
 
-      if (usersError) throw usersError;
+      if (authError) {
+        console.error('Error fetching auth users:', authError);
+        // Fallback to public users table if admin access fails
+        const { data: usersData, error: usersError } = await supabase
+          .from('users')
+          .select('id, email, created_at');
 
-      if (!usersData || usersData.length === 0) {
+        if (usersError) throw usersError;
+
+        if (!usersData || usersData.length === 0) {
+          setUsers([]);
+          return;
+        }
+
+        const authUsersFromTable = usersData.map(u => ({
+          id: u.id,
+          email: u.email,
+          created_at: u.created_at
+        }));
+
+        await processUsersData(authUsersFromTable);
+        return;
+      }
+
+      if (!authUsers || authUsers.length === 0) {
         setUsers([]);
         return;
       }
+
+      const usersData = authUsers.map(u => ({
+        id: u.id,
+        email: u.email || '',
+        created_at: u.created_at
+      }));
+
+      await processUsersData(usersData);
+    } catch (error) {
+      console.error('Error fetching detailed users:', error);
+      setUsers([]);
+    }
+  };
+
+  const processUsersData = async (usersData: { id: string; email: string; created_at: string }[]) => {
+    try {
 
       // Get all stories for all users
       const { data: allStories } = await supabase
@@ -509,7 +465,7 @@ const AdminPanel: React.FC = () => {
 
       setUsers(processedUsers);
     } catch (error) {
-      console.error('Error fetching detailed users:', error);
+      console.error('Error processing users data:', error);
       setUsers([]);
     }
   };
@@ -622,7 +578,12 @@ const AdminPanel: React.FC = () => {
   };
 
   const handleHeroImageUpload = async (file: File) => {
-    if (!file) return;
+    if (!file) {
+      console.log('No file selected');
+      return;
+    }
+
+    console.log('Starting upload for file:', file.name, 'Size:', file.size, 'Type:', file.type);
 
     // Validate file
     if (file.size > 5 * 1024 * 1024) {
@@ -637,33 +598,53 @@ const AdminPanel: React.FC = () => {
 
     setHeroLoading(true);
     try {
-      // Get image dimensions
-      const img = new Image();
-      const dimensions = await new Promise<{width: number, height: number}>((resolve) => {
-        img.onload = () => resolve({ width: img.width, height: img.height });
+      console.log('Step 1: Getting image dimensions...');
+      // Get image dimensions using HTMLImageElement
+      const dimensions = await new Promise<{width: number, height: number}>((resolve, reject) => {
+        const img = document.createElement('img');
+        img.onload = () => {
+          console.log('Image loaded. Dimensions:', img.naturalWidth, 'x', img.naturalHeight);
+          resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          URL.revokeObjectURL(img.src);
+        };
+        img.onerror = (e) => {
+          console.error('Failed to load image for dimensions', e);
+          URL.revokeObjectURL(img.src);
+          reject(new Error('Failed to load image'));
+        };
         img.src = URL.createObjectURL(file);
       });
 
       // Upload to storage
-      const fileName = `hero/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      const { error: uploadError } = await supabase.storage
-        .from('images')
+      const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+      console.log('Step 2: Uploading to storage bucket hero-images with filename:', fileName);
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('hero-images')
         .upload(fileName, file, {
           contentType: file.type,
           upsert: false
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        throw uploadError;
+      }
+
+      console.log('Upload successful, data:', uploadData);
 
       const { data: { publicUrl } } = supabase.storage
-        .from('images')
+        .from('hero-images')
         .getPublicUrl(fileName);
+
+      console.log('Step 3: Public URL generated:', publicUrl);
 
       // Get next display order
       const nextOrder = heroImages.length > 0 ? Math.max(...heroImages.map(img => img.display_order)) + 1 : 1;
+      console.log('Step 4: Inserting into database with order:', nextOrder);
 
       // Create database record
-      const { error } = await supabase
+      const { data: insertData, error } = await supabase
         .from('hero_images')
         .insert([{
           image_url: publicUrl,
@@ -673,14 +654,29 @@ const AdminPanel: React.FC = () => {
           width: dimensions.width,
           height: dimensions.height,
           file_size: file.size
-        }]);
+        }])
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database insert error:', error);
+        throw error;
+      }
+
+      console.log('Database insert successful:', insertData);
+      console.log('Step 5: Refreshing hero images list...');
 
       await fetchHeroImages();
-    } catch (error) {
+      alert('Imagen subida exitosamente');
+      console.log('Upload complete!');
+    } catch (error: any) {
       console.error('Error uploading hero image:', error);
-      alert('Error al subir la imagen');
+      console.error('Error details:', {
+        message: error?.message,
+        statusCode: error?.statusCode,
+        details: error?.details,
+        hint: error?.hint
+      });
+      alert(`Error al subir la imagen: ${error?.message || 'Error desconocido'}`);
     } finally {
       setHeroLoading(false);
     }
@@ -771,8 +767,8 @@ const AdminPanel: React.FC = () => {
       const fileName = image.image_url.split('/').pop();
       if (fileName) {
         await supabase.storage
-          .from('images')
-          .remove([`hero/${fileName}`]);
+          .from('hero-images')
+          .remove([fileName]);
       }
 
       await fetchHeroImages();
@@ -815,7 +811,7 @@ const AdminPanel: React.FC = () => {
     return sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />;
   };
 
-  const exportData = async (type: 'users' | 'stories' | 'feedback') => {
+  const exportData = async (type: 'users' | 'feedback') => {
     let data: any[] = [];
     let filename = '';
 
@@ -823,10 +819,6 @@ const AdminPanel: React.FC = () => {
       case 'users':
         data = filteredUsers;
         filename = 'users.csv';
-        break;
-      case 'stories':
-        data = stories;
-        filename = 'stories.csv';
         break;
       case 'feedback':
         data = feedback;
@@ -942,93 +934,6 @@ const AdminPanel: React.FC = () => {
     });
   };
 
-  const handleDeleteContent = (type: 'story' | 'recording' | 'image', item: any) => {
-    const typeLabels = {
-      story: 'historia',
-      recording: 'grabación',
-      image: 'imagen'
-    };
-
-    const deleteMessages = {
-      story: `¿Estás seguro de que quieres eliminar la historia "${item.title}"? Esto eliminará permanentemente todos sus capítulos, grabaciones e imágenes asociadas.`,
-      recording: `¿Estás seguro de que quieres eliminar esta grabación? Esta acción no se puede deshacer.`,
-      image: `¿Estás seguro de que quieres eliminar esta imagen? Esta acción no se puede deshacer.`
-    };
-
-    setConfirmModal({
-      isOpen: true,
-      title: `Eliminar ${typeLabels[type]}`,
-      message: deleteMessages[type],
-      onConfirm: async () => {
-        try {
-          setConfirmModal(prev => ({ ...prev, loading: true }));
-
-          const tables = {
-            story: 'stories',
-            recording: 'recordings',
-            image: 'images'
-          };
-
-          const { error } = await supabase
-            .from(tables[type])
-            .delete()
-            .eq('id', item.id);
-
-          if (error) throw error;
-
-          // Update local state
-          if (type === 'story') {
-            setStories(prev => prev.filter(s => s.id !== item.id));
-          } else if (type === 'recording') {
-            setRecordings(prev => prev.filter(r => r.id !== item.id));
-          } else if (type === 'image') {
-            setImages(prev => prev.filter(i => i.id !== item.id));
-          }
-
-          setConfirmModal(prev => ({ ...prev, isOpen: false, loading: false }));
-        } catch (error) {
-          console.error(`Error deleting ${type}:`, error);
-          alert(`Error al eliminar ${typeLabels[type]}`);
-          setConfirmModal(prev => ({ ...prev, loading: false }));
-        }
-      },
-      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false }))
-    });
-  };
-
-  const formatDuration = (seconds: number): string => {
-    if (!seconds) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const getFilteredContent = () => {
-    const searchTerm = contentSearchTerm.toLowerCase();
-    
-    switch (contentSubTab) {
-      case 'stories':
-        return stories.filter(story =>
-          story.title.toLowerCase().includes(searchTerm) ||
-          story.user_email.toLowerCase().includes(searchTerm) ||
-          story.relationship.toLowerCase().includes(searchTerm)
-        );
-      case 'recordings':
-        return recordings.filter(recording =>
-          recording.question.toLowerCase().includes(searchTerm) ||
-          recording.user_email.toLowerCase().includes(searchTerm) ||
-          recording.story_title.toLowerCase().includes(searchTerm)
-        );
-      case 'images':
-        return images.filter(image =>
-          image.question.toLowerCase().includes(searchTerm) ||
-          image.user_email.toLowerCase().includes(searchTerm) ||
-          image.story_title.toLowerCase().includes(searchTerm)
-        );
-      default:
-        return [];
-    }
-  };
 
   const maskApiKey = (key: string) => {
     if (key.length <= 8) return key;
@@ -1037,8 +942,8 @@ const AdminPanel: React.FC = () => {
 
   const adminTabs = [
     { id: 'users' as AdminTab, label: 'Gestión de Usuarios', icon: Users },
-    { id: 'content' as AdminTab, label: 'Gestión de Contenido', icon: BookOpen },
     { id: 'chapters-questions' as AdminTab, label: 'Capítulos y Preguntas', icon: List },
+    { id: 'role-permissions' as AdminTab, label: 'Permisos de Roles', icon: Settings },
     { id: 'hero-carousel' as AdminTab, label: 'Carrusel Hero', icon: Image },
     { id: 'ai-config' as AdminTab, label: 'Configuración de IA', icon: Brain },
     { id: 'analytics' as AdminTab, label: 'Análisis y Reportes', icon: BarChart3 },
@@ -1257,278 +1162,11 @@ const AdminPanel: React.FC = () => {
           </div>
         );
 
-      case 'content':
-        return (
-          <div className="space-y-6">
-            {/* Content Sub-tabs */}
-            <div className="border-b border-gray-200">
-              <nav className="flex space-x-8">
-                {[
-                  { id: 'stories', label: 'Historias', count: stories.length },
-                  { id: 'recordings', label: 'Grabaciones', count: recordings.length },
-                  { id: 'images', label: 'Imágenes', count: images.length }
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => {
-                      setContentSubTab(tab.id as 'stories' | 'recordings' | 'images');
-                      setContentSearchTerm('');
-                    }}
-                    className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
-                      contentSubTab === tab.id
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    {tab.label} ({tab.count})
-                  </button>
-                ))}
-              </nav>
-            </div>
-
-            {/* Search and Actions */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder={`Buscar ${contentSubTab === 'stories' ? 'historias' : contentSubTab === 'recordings' ? 'grabaciones' : 'imágenes'}...`}
-                  value={contentSearchTerm}
-                  onChange={(e) => setContentSearchTerm(e.target.value)}
-                  className="pl-10 w-64"
-                />
-              </div>
-            </div>
-
-            {/* Content Display */}
-            {contentSubTab === 'stories' && (
-              <div className="space-y-4">
-                {getFilteredContent().length === 0 ? (
-                  <div className="text-center py-8">
-                    <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500">
-                      {contentSearchTerm 
-                        ? "No se encontraron historias que coincidan con la búsqueda"
-                        : "No hay historias disponibles"
-                      }
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Título
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Usuario
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Parentesco
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Progreso
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Fecha
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Acciones
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {getFilteredContent().map((story: any) => (
-                          <tr key={story.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                              {story.title}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {story.user_email}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {story.relationship}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              <div className="flex items-center space-x-2">
-                                <div className="w-16 bg-gray-200 rounded-full h-2">
-                                  <div
-                                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                                    style={{ width: `${story.progress}%` }}
-                                  />
-                                </div>
-                                <span className="text-xs">{story.progress}%</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {new Date(story.created_at).toLocaleDateString('es-ES')}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              <Button
-                                onClick={() => handleDeleteContent('story', story)}
-                                icon={Trash2}
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                title="Eliminar historia"
-                              />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {contentSubTab === 'recordings' && (
-              <div className="space-y-4">
-                {getFilteredContent().length === 0 ? (
-                  <div className="text-center py-8">
-                    <Mic className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500">
-                      {contentSearchTerm 
-                        ? "No se encontraron grabaciones que coincidan con la búsqueda"
-                        : "No hay grabaciones disponibles"
-                      }
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Pregunta
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Usuario
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Historia
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Duración
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Fecha
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Acciones
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {getFilteredContent().map((recording: any) => (
-                          <tr key={recording.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium text-gray-900 max-w-xs truncate">
-                              {recording.question}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {recording.user_email}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
-                              {recording.story_title}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {formatDuration((recording.duration_ms || 0) / 1000)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {new Date(recording.created_at).toLocaleDateString('es-ES')}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              <div className="flex items-center space-x-2">
-                                {recording.audio_url && (
-                                  <Button
-                                    onClick={() => window.open(recording.audio_url, '_blank')}
-                                    icon={Eye}
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 w-8 p-0"
-                                    title="Escuchar grabación"
-                                  />
-                                )}
-                                <Button
-                                  onClick={() => handleDeleteContent('recording', recording)}
-                                  icon={Trash2}
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                  title="Eliminar grabación"
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {contentSubTab === 'images' && (
-              <div className="space-y-4">
-                {getFilteredContent().length === 0 ? (
-                  <div className="text-center py-8">
-                    <Camera className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500">
-                      {contentSearchTerm 
-                        ? "No se encontraron imágenes que coincidan con la búsqueda"
-                        : "No hay imágenes disponibles"
-                      }
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {getFilteredContent().map((image: any) => (
-                      <div key={image.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
-                        <div className="aspect-w-16 aspect-h-9 bg-gray-100">
-                          <img
-                            src={image.image_url}
-                            alt="User uploaded content"
-                            className="w-full h-48 object-cover"
-                          />
-                        </div>
-                        <div className="p-4">
-                          <p className="text-sm font-medium text-gray-900 mb-2 line-clamp-2">
-                            {image.question}
-                          </p>
-                          <div className="space-y-1 text-xs text-gray-500 mb-3">
-                            <p><span className="font-medium">Usuario:</span> {image.user_email}</p>
-                            <p><span className="font-medium">Historia:</span> {image.story_title}</p>
-                            <p><span className="font-medium">Fecha:</span> {new Date(image.created_at).toLocaleDateString('es-ES')}</p>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <Button
-                              onClick={() => window.open(image.image_url, '_blank')}
-                              icon={Eye}
-                              variant="outline"
-                              size="sm"
-                            >
-                              Ver
-                            </Button>
-                            <Button
-                              onClick={() => handleDeleteContent('image', image)}
-                              icon={Trash2}
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-
       case 'chapters-questions':
         return <ChaptersManager />;
+
+      case 'role-permissions':
+        return <RolePermissionsManager />;
 
       case 'hero-carousel':
         return (
@@ -1542,12 +1180,21 @@ const AdminPanel: React.FC = () => {
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => e.target.files?.[0] && handleHeroImageUpload(e.target.files[0])}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleHeroImageUpload(file);
+                      e.target.value = '';
+                    }
+                  }}
                   className="hidden"
                   id="hero-upload"
                 />
                 <Button
-                  onClick={() => document.getElementById('hero-upload')?.click()}
+                  onClick={() => {
+                    const input = document.getElementById('hero-upload') as HTMLInputElement;
+                    if (input) input.click();
+                  }}
                   icon={Upload}
                   loading={heroLoading}
                   disabled={heroLoading}
@@ -1667,7 +1314,10 @@ const AdminPanel: React.FC = () => {
                   Sube la primera imagen para comenzar a configurar el carrusel hero.
                 </p>
                 <Button
-                  onClick={() => document.getElementById('hero-upload')?.click()}
+                  onClick={() => {
+                    const input = document.getElementById('hero-upload') as HTMLInputElement;
+                    if (input) input.click();
+                  }}
                   icon={Upload}
                   loading={heroLoading}
                 >
@@ -1972,6 +1622,99 @@ const AdminPanel: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Historical Growth Trends */}
+            {analytics.monthlyGrowth.length > 0 && (
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">Crecimiento Histórico (Últimos 6 Meses)</h3>
+
+                <div className="space-y-6">
+                  {/* Users Growth */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-700">Nuevos Usuarios por Mes</span>
+                      <Users className="h-4 w-4 text-blue-500" />
+                    </div>
+                    <div className="space-y-2">
+                      {analytics.monthlyGrowth.map((month) => {
+                        const maxUsers = Math.max(...analytics.monthlyGrowth.map(m => m.users), 1);
+                        const percentage = (month.users / maxUsers) * 100;
+                        return (
+                          <div key={month.month} className="flex items-center space-x-3">
+                            <span className="text-xs text-gray-500 w-16">{month.month}</span>
+                            <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
+                              <div
+                                className="bg-blue-500 h-6 rounded-full transition-all duration-500"
+                                style={{ width: `${percentage}%` }}
+                              />
+                              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
+                                {month.users}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Stories Growth */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-700">Historias Creadas por Mes</span>
+                      <BookOpen className="h-4 w-4 text-green-500" />
+                    </div>
+                    <div className="space-y-2">
+                      {analytics.monthlyGrowth.map((month) => {
+                        const maxStories = Math.max(...analytics.monthlyGrowth.map(m => m.stories), 1);
+                        const percentage = (month.stories / maxStories) * 100;
+                        return (
+                          <div key={month.month} className="flex items-center space-x-3">
+                            <span className="text-xs text-gray-500 w-16">{month.month}</span>
+                            <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
+                              <div
+                                className="bg-green-500 h-6 rounded-full transition-all duration-500"
+                                style={{ width: `${percentage}%` }}
+                              />
+                              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
+                                {month.stories}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Recordings Growth */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-700">Grabaciones por Mes</span>
+                      <Mic className="h-4 w-4 text-purple-500" />
+                    </div>
+                    <div className="space-y-2">
+                      {analytics.monthlyGrowth.map((month) => {
+                        const maxRecordings = Math.max(...analytics.monthlyGrowth.map(m => m.recordings), 1);
+                        const percentage = (month.recordings / maxRecordings) * 100;
+                        return (
+                          <div key={month.month} className="flex items-center space-x-3">
+                            <span className="text-xs text-gray-500 w-16">{month.month}</span>
+                            <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
+                              <div
+                                className="bg-purple-500 h-6 rounded-full transition-all duration-500"
+                                style={{ width: `${percentage}%` }}
+                              />
+                              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
+                                {month.recordings}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
 
