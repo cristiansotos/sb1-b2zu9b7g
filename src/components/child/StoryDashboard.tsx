@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Settings, Plus, Calendar, Baby, Download, Trash2, X, Clock, CreditCard as Edit, Heart, Star } from 'lucide-react';
+import { ArrowLeft, Settings, Plus, Calendar, Baby, Download, Trash2, X, Clock, CreditCard as Edit, Heart, Star, AlertCircle, RefreshCw } from 'lucide-react';
+import { requestDeduplicator } from '../../lib/requestCache';
 import Layout from '../layout/Layout';
 import Button from '../ui/Button';
 import LoadingSpinner from '../ui/LoadingSpinner';
@@ -129,6 +130,7 @@ const StoryDashboard: React.FC = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline');
   const [searchTerm, setSearchTerm] = useState('');
+  const [memoriesError, setMemoriesError] = useState<string | null>(null);
 
   useEffect(() => {
     if (stories.length === 0) {
@@ -138,14 +140,40 @@ const StoryDashboard: React.FC = () => {
 
   useEffect(() => {
     if (storyId && stories.length > 0) {
+      console.log('[StoryDashboard] Story changed to:', storyId);
       const foundStory = stories.find(s => s.id === storyId);
       setStory(foundStory || null);
-      
+
       if (foundStory) {
-        fetchMemories(storyId);
+        setMemoriesError(null);
+        // Clear any pending requests for previous stories
+        requestDeduplicator.invalidateCachePattern('fetchMemories');
+
+        fetchMemories(storyId).catch((error) => {
+          console.error('[StoryDashboard] Error fetching memories:', error);
+          setMemoriesError(error?.message || 'Error al cargar los recuerdos');
+        });
       }
     }
+
+    return () => {
+      console.log('[StoryDashboard] Cleaning up for story:', storyId);
+      // Cancel any pending memory fetches when component unmounts or story changes
+      if (storyId) {
+        requestDeduplicator.invalidateCachePattern(storyId);
+      }
+    };
   }, [storyId, stories, fetchMemories]);
+
+  const retryFetchMemories = () => {
+    if (storyId) {
+      setMemoriesError(null);
+      fetchMemories(storyId).catch((error) => {
+        console.error('[StoryDashboard] Error fetching memories:', error);
+        setMemoriesError(error?.message || 'Error al cargar los recuerdos');
+      });
+    }
+  };
 
   const handleDeleteStory = async () => {
     if (!story) return;
@@ -321,7 +349,24 @@ const StoryDashboard: React.FC = () => {
         {/* Memories List */}
         {viewMode === 'timeline' && (
           <div className="space-y-3 sm:space-y-4">
-            {filteredMemories.length > 0 ? (
+            {memoriesError ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+                <div className="flex items-start space-x-3 mb-4">
+                  <AlertCircle className="h-6 w-6 text-red-600 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-red-900 mb-2">Error al cargar recuerdos</h3>
+                    <p className="text-sm text-red-800">{memoriesError}</p>
+                  </div>
+                </div>
+                <Button
+                  onClick={retryFetchMemories}
+                  icon={RefreshCw}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  Reintentar
+                </Button>
+              </div>
+            ) : filteredMemories.length > 0 ? (
               filteredMemories.map((memory) => (
                 <div key={memory.id} className="group">
                   <MemoryCard

@@ -11,6 +11,7 @@ interface ChapterState {
   recordings: Recording[];
   loading: boolean;
   selectedChapterId: string | null;
+  reset: () => void;
   fetchChapters: (storyId: string) => Promise<void>;
   fetchRecordings: (chapterId: string) => Promise<void>;
   fetchAllRecordingsForStory: (storyId: string) => Promise<void>;
@@ -36,7 +37,7 @@ interface ChapterState {
   addCustomQuestion: (chapterId: string, question: string) => Promise<{ success: boolean; error?: string }>;
   removeCustomQuestion: (chapterId: string, question: string) => Promise<{ success: boolean; error?: string }>;
   reorderQuestions: (chapterId: string, questionOrder: string[]) => Promise<{ success: boolean; error?: string }>;
-  updateStoryProgress: (storyId: string) => Promise<void>;
+  updateStoryProgress: (storyId: string, options?: { immediate?: boolean }) => Promise<void>;
   setSelectedChapter: (chapterId: string | null) => void;
 }
 
@@ -45,6 +46,15 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
   recordings: [],
   loading: false,
   selectedChapterId: null,
+
+  reset: () => {
+    set({
+      chapters: [],
+      recordings: [],
+      loading: false,
+      selectedChapterId: null
+    });
+  },
 
   fetchChapters: async (storyId: string) => {
     set({ loading: true });
@@ -162,6 +172,23 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         return { success: false, error: 'Usuario no autenticado' };
       }
 
+      // Check if question already has content (recordings or images)
+      const { data: existingRecordings } = await supabase
+        .from('recordings')
+        .select('id')
+        .eq('chapter_id', data.chapterId)
+        .eq('question', data.question)
+        .limit(1);
+
+      const { data: existingImages } = await supabase
+        .from('images')
+        .select('id')
+        .eq('chapter_id', data.chapterId)
+        .eq('question', data.question)
+        .limit(1);
+
+      const hadContent = (existingRecordings && existingRecordings.length > 0) || (existingImages && existingImages.length > 0);
+
       // Upload audio file
       const fileName = `${user.id}/${data.chapterId}/${Date.now()}_recording.webm`;
       const { error: uploadError } = await supabase.storage
@@ -200,10 +227,14 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         recordings: [...state.recordings, recording]
       }));
 
-      // Update story progress after creating recording
+      // Only update story progress if this is the FIRST content for this question
+      // If question already had content, progress won't change, so skip update
       const chapter = get().chapters.find(c => c.id === data.chapterId);
-      if (chapter) {
-        await get().updateStoryProgress(chapter.story_id);
+      if (chapter && !hadContent) {
+        // Fire-and-forget: don't await, let it run in background
+        get().updateStoryProgress(chapter.story_id).catch(err => {
+          console.error('Background progress update failed:', err);
+        });
       }
 
       return { success: true };
@@ -230,11 +261,34 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         recordings: state.recordings.filter(r => r.id !== recordingId)
       }));
 
-      // Update story progress after deleting recording
-      if (recordingToDelete?.chapter_id) {
-        const chapter = get().chapters.find(c => c.id === recordingToDelete.chapter_id);
-        if (chapter) {
-          await get().updateStoryProgress(chapter.story_id);
+      // Only update story progress if this was the LAST content for this question
+      if (recordingToDelete?.chapter_id && recordingToDelete?.question) {
+        // Check if question still has content after deletion
+        const { data: remainingRecordings } = await supabase
+          .from('recordings')
+          .select('id')
+          .eq('chapter_id', recordingToDelete.chapter_id)
+          .eq('question', recordingToDelete.question)
+          .limit(1);
+
+        const { data: existingImages } = await supabase
+          .from('images')
+          .select('id')
+          .eq('chapter_id', recordingToDelete.chapter_id)
+          .eq('question', recordingToDelete.question)
+          .limit(1);
+
+        const stillHasContent = (remainingRecordings && remainingRecordings.length > 0) || (existingImages && existingImages.length > 0);
+
+        // Only update progress if question now has NO content (progress will change)
+        if (!stillHasContent) {
+          const chapter = get().chapters.find(c => c.id === recordingToDelete.chapter_id);
+          if (chapter) {
+            // Fire-and-forget: don't await
+            get().updateStoryProgress(chapter.story_id).catch(err => {
+              console.error('Background progress update failed:', err);
+            });
+          }
         }
       }
 
@@ -415,19 +469,33 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
   },
 
   updateRecordingTranscript: async (recordingId, formatted) => {
+    const startTime = performance.now();
+
     try {
-      // Update recording with formatted transcript
+      console.log(`[Performance] Starting transcript update for recording ${recordingId}`);
+
+      // Optimized update: only update the necessary fields in a single query
       const { error } = await supabase
         .from('recordings')
         .update({
           transcript: formatted.plain,
-          transcript_formatted: formatted
+          transcript_formatted: formatted,
+          updated_at: new Date().toISOString()
         })
-        .eq('id', recordingId);
+        .eq('id', recordingId)
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('[Performance] Transcript update failed:', {
+          duration: performance.now() - startTime,
+          error: error.message,
+          code: error.code
+        });
+        throw error;
+      }
 
-      // Update local state
+      // Update local state immediately after successful database write
       set(state => ({
         recordings: state.recordings.map(r =>
           r.id === recordingId
@@ -436,9 +504,13 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         )
       }));
 
+      const duration = performance.now() - startTime;
+      console.log(`[Performance] Transcript update completed in ${duration.toFixed(2)}ms`);
+
       return { success: true };
     } catch (error: any) {
-      console.error('Error updating transcript:', error);
+      const duration = performance.now() - startTime;
+      console.error(`[Performance] Error updating transcript after ${duration.toFixed(2)}ms:`, error);
       return { success: false, error: error.message };
     }
   },
@@ -479,6 +551,23 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
         return { success: false, error: 'Usuario no autenticado' };
       }
 
+      // Check if question already has content
+      const { data: existingRecordings } = await supabase
+        .from('recordings')
+        .select('id')
+        .eq('chapter_id', data.chapterId)
+        .eq('question', data.question)
+        .limit(1);
+
+      const { data: existingImages } = await supabase
+        .from('images')
+        .select('id')
+        .eq('chapter_id', data.chapterId)
+        .eq('question', data.question)
+        .limit(1);
+
+      const hadContent = (existingRecordings && existingRecordings.length > 0) || (existingImages && existingImages.length > 0);
+
       // Optimize image
       const optimizedImage = await optimizeImage(data.imageFile);
       const fileName = `${user.id}/${data.chapterId}/${Date.now()}_${data.imageFile.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
@@ -508,10 +597,13 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
       if (error) throw error;
 
-      // Update story progress after uploading image
+      // Only update story progress if this is the FIRST content for this question
       const chapter = get().chapters.find(c => c.id === data.chapterId);
-      if (chapter) {
-        await get().updateStoryProgress(chapter.story_id);
+      if (chapter && !hadContent) {
+        // Fire-and-forget: don't await
+        get().updateStoryProgress(chapter.story_id).catch(err => {
+          console.error('Background progress update failed:', err);
+        });
       }
 
       return { success: true };
@@ -523,10 +615,10 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
   deleteQuestionImage: async (imageId) => {
     try {
-      // Get image info before deleting to find the chapter
+      // Get image info before deleting to find the chapter and question
       const { data: imageToDelete } = await supabase
         .from('images')
-        .select('chapter_id')
+        .select('chapter_id, question')
         .eq('id', imageId)
         .single();
 
@@ -537,11 +629,34 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
 
       if (error) throw error;
 
-      // Update story progress after deleting image
-      if (imageToDelete?.chapter_id) {
-        const chapter = get().chapters.find(c => c.id === imageToDelete.chapter_id);
-        if (chapter) {
-          await get().updateStoryProgress(chapter.story_id);
+      // Only update story progress if this was the LAST content for this question
+      if (imageToDelete?.chapter_id && imageToDelete?.question) {
+        // Check if question still has content after deletion
+        const { data: existingRecordings } = await supabase
+          .from('recordings')
+          .select('id')
+          .eq('chapter_id', imageToDelete.chapter_id)
+          .eq('question', imageToDelete.question)
+          .limit(1);
+
+        const { data: remainingImages } = await supabase
+          .from('images')
+          .select('id')
+          .eq('chapter_id', imageToDelete.chapter_id)
+          .eq('question', imageToDelete.question)
+          .limit(1);
+
+        const stillHasContent = (existingRecordings && existingRecordings.length > 0) || (remainingImages && remainingImages.length > 0);
+
+        // Only update progress if question now has NO content
+        if (!stillHasContent) {
+          const chapter = get().chapters.find(c => c.id === imageToDelete.chapter_id);
+          if (chapter) {
+            // Fire-and-forget: don't await
+            get().updateStoryProgress(chapter.story_id).catch(err => {
+              console.error('Background progress update failed:', err);
+            });
+          }
         }
       }
 
@@ -617,8 +732,12 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
     }
   },
 
-  updateStoryProgress: async (storyId: string) => {
-    return requestDeduplicator.debounce(`updateStoryProgress:${storyId}`, async () => {
+  updateStoryProgress: async (storyId: string, options?: { immediate?: boolean }) => {
+    // For single saves, execute immediately without debounce
+    // For batch operations, debounce can still be used by passing immediate: false
+    const immediate = options?.immediate !== false; // default to true
+
+    const executeFn = async () => {
       try {
         const { error } = await supabase.rpc('update_story_progress', {
           story_id_param: storyId
@@ -631,7 +750,15 @@ export const useChapterStore = create<ChapterState>((set, get) => ({
       } catch (error) {
         console.error('Error updating story progress:', error);
       }
-    }, 500);
+    };
+
+    if (immediate) {
+      // Execute immediately for single recording saves
+      return executeFn();
+    } else {
+      // Use debouncing for batch operations
+      return requestDeduplicator.debounce(`updateStoryProgress:${storyId}`, executeFn, 500);
+    }
   },
 
   setSelectedChapter: (chapterId) => {

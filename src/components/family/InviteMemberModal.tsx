@@ -1,14 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { X, Mail, UserPlus } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Mail, UserPlus, AlertCircle, RefreshCw } from 'lucide-react';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
+import LoadingSpinner from '../ui/LoadingSpinner';
 import { useFamilyGroupStore } from '../../store/familyGroupStore';
 import { FamilyRole } from '../../types';
 import { toast } from 'sonner';
 import { getAvailableRolesToInvite, getRoleDisplayName, getRoleColor } from '../../lib/permissions';
 import { useFamilyPermissions } from '../../hooks/usePermissions';
 import { useAuthStore } from '../../store/authStore';
+import { withTimeout, getUserFriendlyError } from '../../lib/queryUtils';
 
 interface InviteMemberModalProps {
   isOpen: boolean;
@@ -26,24 +28,68 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
   const [email, setEmail] = useState('');
   const [selectedRole, setSelectedRole] = useState<FamilyRole>('editor');
   const [loading, setLoading] = useState(false);
+  const [loadingRoles, setLoadingRoles] = useState(false);
+  const [rolesError, setRolesError] = useState<string | null>(null);
   const [availableRoles, setAvailableRoles] = useState<FamilyRole[]>([]);
   const { inviteMember } = useFamilyGroupStore();
   const { user } = useAuthStore();
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    async function loadAvailableRoles() {
-      const roles = await getAvailableRolesToInvite(userRole);
-      setAvailableRoles(roles);
+    if (!isOpen) {
+      return;
+    }
 
-      if (roles.length > 0 && !roles.includes(selectedRole)) {
-        setSelectedRole(roles[0]);
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    const currentAbortController = abortControllerRef.current;
+
+    async function loadAvailableRoles() {
+      setLoadingRoles(true);
+      setRolesError(null);
+
+      try {
+        const roles = await withTimeout(
+          getAvailableRolesToInvite(userRole),
+          10000,
+          'La carga de roles tardó demasiado tiempo'
+        );
+
+        if (currentAbortController.signal.aborted) {
+          return;
+        }
+
+        setAvailableRoles(roles);
+
+        if (roles.length > 0 && !roles.includes(selectedRole)) {
+          setSelectedRole(roles[0]);
+        }
+      } catch (error: any) {
+        if (currentAbortController.signal.aborted) {
+          return;
+        }
+
+        console.error('[InviteMemberModal] Error loading roles:', error);
+        setRolesError(getUserFriendlyError(error));
+
+        setAvailableRoles(['editor', 'viewer']);
+        if (!['editor', 'viewer'].includes(selectedRole)) {
+          setSelectedRole('editor');
+        }
+      } finally {
+        if (!currentAbortController.signal.aborted) {
+          setLoadingRoles(false);
+        }
       }
     }
 
-    if (isOpen) {
-      loadAvailableRoles();
-    }
-  }, [userRole, isOpen, selectedRole]);
+    loadAvailableRoles();
+
+    return () => {
+      currentAbortController.abort();
+    };
+  }, [userRole, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,8 +125,30 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
     if (!loading) {
       setEmail('');
       setSelectedRole('editor');
+      setRolesError(null);
+      abortControllerRef.current?.abort();
       onClose();
     }
+  };
+
+  const retryLoadRoles = () => {
+    setRolesError(null);
+    setLoadingRoles(true);
+
+    getAvailableRolesToInvite(userRole)
+      .then(roles => {
+        setAvailableRoles(roles);
+        if (roles.length > 0 && !roles.includes(selectedRole)) {
+          setSelectedRole(roles[0]);
+        }
+      })
+      .catch(error => {
+        setRolesError(getUserFriendlyError(error));
+        setAvailableRoles(['editor', 'viewer']);
+      })
+      .finally(() => {
+        setLoadingRoles(false);
+      });
   };
 
   return (
@@ -125,8 +193,32 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
             <label className="block text-sm font-medium text-gray-700 mb-3">
               Rol *
             </label>
-            <div className="space-y-2">
-              {availableRoles.map((role) => (
+
+            {loadingRoles ? (
+              <div className="flex items-center justify-center py-8">
+                <LoadingSpinner size="sm" message="Cargando roles disponibles..." />
+              </div>
+            ) : rolesError ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm text-red-800 mb-2">{rolesError}</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={retryLoadRoles}
+                      icon={RefreshCw}
+                      className="text-red-600 border-red-300 hover:bg-red-100"
+                    >
+                      Reintentar
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {availableRoles.map((role) => (
                 <label
                   key={role}
                   className={`flex items-center p-3 border-2 rounded-lg cursor-pointer transition-all ${
@@ -161,7 +253,8 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                   </div>
                 </label>
               ))}
-            </div>
+              </div>
+            )}
           </div>
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">

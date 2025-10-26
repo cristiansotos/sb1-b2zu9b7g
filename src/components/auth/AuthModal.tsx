@@ -9,6 +9,8 @@ interface AuthModalProps {
   onClose: () => void;
   mode: 'login' | 'register' | 'forgot-password';
   onSwitchMode: (mode: 'login' | 'register' | 'forgot-password') => void;
+  initialEmail?: string;
+  isInvitationFlow?: boolean;
 }
 
 interface PasswordStrength {
@@ -28,7 +30,9 @@ const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   mode,
-  onSwitchMode
+  onSwitchMode,
+  initialEmail,
+  isInvitationFlow = false
 }) => {
   const [formData, setFormData] = useState({
     email: '',
@@ -63,6 +67,13 @@ const AuthModal: React.FC<AuthModalProps> = ({
       setResetEmailSent(false);
     }
   }, [isOpen]);
+
+  // Pre-populate email if provided (for invitation flow)
+  useEffect(() => {
+    if (initialEmail && isOpen && mode === 'register') {
+      setFormData(prev => ({ ...prev, email: initialEmail }));
+    }
+  }, [initialEmail, isOpen, mode]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -171,7 +182,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
       } else {
         const result = mode === 'login'
           ? await signIn(formData.email, formData.password)
-          : await signUp(formData.email, formData.password);
+          : await signUp(formData.email, formData.password, isInvitationFlow);
 
         if (result.success) {
           if (mode === 'register') {
@@ -183,7 +194,15 @@ const AuthModal: React.FC<AuthModalProps> = ({
             handleClose();
           }
         } else {
-          setErrors({ submit: result.error || 'Error desconocido' });
+          // Check if error is about user already existing
+          const errorMessage = result.error || 'Error desconocido';
+          if (mode === 'register' && (errorMessage.includes('already') || errorMessage.includes('existe') || errorMessage.includes('registered'))) {
+            setErrors({
+              submit: 'userExists:Este correo ya tiene una cuenta. Por favor, inicia sesión en su lugar.'
+            });
+          } else {
+            setErrors({ submit: errorMessage });
+          }
         }
       }
     } catch (error) {
@@ -468,19 +487,41 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
               {/* Submit Error/Success Message */}
               {errors.submit && (
-                <div className={`p-3 rounded-lg flex items-start space-x-2 ${
+                <div className={`p-3 rounded-lg ${
                   errors.submit.startsWith('success:')
                     ? 'bg-green-50 text-green-800'
+                    : errors.submit.startsWith('userExists:')
+                    ? 'bg-blue-50 border-2 border-blue-200'
                     : 'bg-red-50 text-red-800'
                 }`}>
-                  {errors.submit.startsWith('success:') ? (
-                    <CheckCircle2 className="h-5 w-5 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-                  )}
-                  <span className="text-sm">
-                    {errors.submit.replace('success:', '')}
-                  </span>
+                  <div className="flex items-start space-x-2">
+                    {errors.submit.startsWith('success:') ? (
+                      <CheckCircle2 className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className={`h-5 w-5 flex-shrink-0 mt-0.5 ${
+                        errors.submit.startsWith('userExists:') ? 'text-blue-600' : ''
+                      }`} />
+                    )}
+                    <div className="flex-1">
+                      <span className={`text-sm ${
+                        errors.submit.startsWith('userExists:') ? 'text-blue-900' : ''
+                      }`}>
+                        {errors.submit.replace('success:', '').replace('userExists:', '')}
+                      </span>
+                      {errors.submit.startsWith('userExists:') && (
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setErrors({});
+                            onSwitchMode('login');
+                          }}
+                          className="mt-3 w-full bg-blue-600 hover:bg-blue-700"
+                        >
+                          Ir a Iniciar Sesión
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 

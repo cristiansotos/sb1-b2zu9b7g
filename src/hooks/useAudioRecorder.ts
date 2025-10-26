@@ -65,11 +65,13 @@ export const useAudioRecorder = (): UseAudioRecorderReturn => {
   };
 
   // Re-request wake lock when document becomes visible again
-  const handleVisibilityChange = async () => {
-    if (document.visibilityState === 'visible' && isRecording && !isPaused) {
-      await requestWakeLock();
+  const handleVisibilityChange = useCallback(async () => {
+    if (document.visibilityState === 'visible') {
+      if ((isRecording && !isPaused) || isPlaying) {
+        await requestWakeLock();
+      }
     }
-  };
+  }, [isRecording, isPaused, isPlaying]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -153,24 +155,27 @@ export const useAudioRecorder = (): UseAudioRecorderReturn => {
     }
   }, []);
 
-  const playRecording = useCallback(() => {
+  const playRecording = useCallback(async () => {
     if (audioBlob && !isPlaying) {
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
-      
+
       audio.onended = () => {
         setIsPlaying(false);
         URL.revokeObjectURL(audioUrl);
+        releaseWakeLock();
       };
 
       audio.onerror = () => {
         setIsPlaying(false);
         URL.revokeObjectURL(audioUrl);
+        releaseWakeLock();
       };
 
       audioRef.current = audio;
-      audio.play();
+      await audio.play();
       setIsPlaying(true);
+      await requestWakeLock();
     }
   }, [audioBlob, isPlaying]);
 
@@ -179,6 +184,7 @@ export const useAudioRecorder = (): UseAudioRecorderReturn => {
       audioRef.current.pause();
       audioRef.current = null;
       setIsPlaying(false);
+      releaseWakeLock();
     }
   }, [isPlaying]);
 
@@ -188,8 +194,32 @@ export const useAudioRecorder = (): UseAudioRecorderReturn => {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
     };
-  }, [isRecording, isPaused]);
+  }, [handleVisibilityChange]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Stop timer if still running
+      stopTimer();
+      // Release wake lock
+      releaseWakeLock();
+      // Stop media recorder if still active
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch (e) {
+          console.warn('Error stopping media recorder on unmount:', e);
+        }
+      }
+      // Stop audio playback
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, [stopTimer]);
 
   return {
     isRecording,

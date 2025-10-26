@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Camera, Upload, Play, Pause, Trash2, Square, Eye, FileText, Image as ImageIcon, AlertTriangle, SkipForward, RotateCcw } from 'lucide-react';
 import Button from '../ui/Button';
-import RichTextEditor from '../ui/RichTextEditor';
-import TranscriptionDisplay from '../ui/TranscriptionDisplay';
+import EditableTranscriptionDisplay from '../ui/EditableTranscriptionDisplay';
 import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { useChapterStore } from '../../store/chapterStore';
 import { useQuestionStateStore } from '../../store/questionStateStore';
@@ -31,9 +30,13 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const [images, setImages] = useState<Image[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [loadingImages, setLoadingImages] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+  const fetchInProgressRef = useRef(false);
+  const [imageUploadError, setImageUploadError] = useState<{ message: string; details?: string } | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
   const [isPausedRecordingId, setIsPausedRecordingId] = useState<string | null>(null);
-  const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [audioQualityWarnings, setAudioQualityWarnings] = useState<string[]>([]);
   const [showQualityWarning, setShowQualityWarning] = useState(false);
   const [audioQualityThresholds, setAudioQualityThresholds] = useState<AudioQualityThresholds | undefined>(undefined);
@@ -43,6 +46,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const [showSkipModal, setShowSkipModal] = useState(false);
   const [skipDontShowAgain, setSkipDontShowAgain] = useState(false);
   const playingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,22 +84,102 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     updateShowSkipWarning
   } = useQuestionStateStore();
 
-  const fetchImages = async () => {
-    setLoadingImages(true);
+  const fetchImages = async (retryCount = 0, isManualRetry = false) => {
+    // Prevent duplicate concurrent requests
+    if (fetchInProgressRef.current && !isManualRetry) {
+      return;
+    }
+
+    fetchInProgressRef.current = true;
+
+    // Cancel any pending request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+
+    // Only update state if component is still mounted
+    if (isMountedRef.current) {
+      setLoadingImages(true);
+      setImageLoadError(null);
+    }
+
     try {
       const { data, error } = await supabase
         .from('images')
         .select('*')
         .eq('chapter_id', chapterId)
         .eq('question', question)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(50)
+        .abortSignal(abortControllerRef.current.signal);
 
-      if (error) throw error;
-      setImages(data || []);
-    } catch (error) {
-      console.error('Error fetching images:', error);
+      if (error) {
+        // Log detailed error information for debugging
+        console.error('Supabase images query error:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          retryCount
+        });
+
+        // Handle different error types
+        if (error.code === '57014' && retryCount < 2) {
+          // Query timeout - retry with exponential backoff
+          console.warn(`Image query timeout, retrying (${retryCount + 1}/2)...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+          fetchInProgressRef.current = false;
+          return fetchImages(retryCount + 1, isManualRetry);
+        }
+
+        // Handle 500 server errors with retry
+        if (error.message?.includes('500') && retryCount < 3) {
+          console.warn(`Server error 500, retrying (${retryCount + 1}/3)...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+          fetchInProgressRef.current = false;
+          return fetchImages(retryCount + 1, isManualRetry);
+        }
+
+        throw error;
+      }
+
+      // Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setImages(data || []);
+        setImageLoadError(null);
+      }
+    } catch (error: any) {
+      // Don't handle AbortError - it's expected on unmount
+      if (error.name === 'AbortError') {
+        console.log('Image fetch aborted (component unmounting or new request started)');
+        return;
+      }
+
+      // Only set error if component is still mounted
+      if (isMountedRef.current) {
+        console.error('Error fetching images:', error);
+
+        let errorMessage = 'Error al cargar las imágenes. Por favor, intenta de nuevo.';
+
+        if (error.code === '57014') {
+          errorMessage = 'La carga de imágenes está tardando demasiado. Por favor, intenta recargar.';
+        } else if (error.message?.includes('500')) {
+          errorMessage = 'Error del servidor al cargar imágenes. Por favor, intenta de nuevo en unos momentos.';
+        } else if (error.message?.includes('Failed to fetch') || error instanceof TypeError) {
+          errorMessage = 'Error de conexión. Verifica tu internet e intenta de nuevo.';
+        }
+
+        setImageLoadError(errorMessage);
+      }
     } finally {
-      setLoadingImages(false);
+      fetchInProgressRef.current = false;
+      // Only update loading state if component is still mounted
+      if (isMountedRef.current) {
+        setLoadingImages(false);
+      }
     }
   };
 
@@ -123,11 +207,60 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     }
   };
 
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+
+        wakeLockRef.current.addEventListener('release', () => {
+          console.log('Wake lock was released');
+        });
+      }
+    } catch (error) {
+      console.warn('Wake lock request failed:', error);
+    }
+  };
+
+  const releaseWakeLock = () => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release();
+      wakeLockRef.current = null;
+    }
+  };
+
+  const handleVisibilityChange = async () => {
+    if (document.visibilityState === 'visible' && playingRecordingId) {
+      await requestWakeLock();
+    }
+  };
+
   useEffect(() => {
+    // Set mounted flag
+    isMountedRef.current = true;
+
     fetchImages();
     fetchAudioQualitySettings();
     fetchUserPreferences();
+
+    // Cleanup function to abort pending requests and mark as unmounted
+    return () => {
+      isMountedRef.current = false;
+      fetchInProgressRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
   }, [chapterId, question]);
+
+  useEffect(() => {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [playingRecordingId]);
 
   const handleStartRecording = async () => {
     try {
@@ -140,28 +273,52 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const handleSaveRecording = async () => {
     if (!audioBlob) return;
 
-    setIsUploading(true);
-    try {
-      const qualityMetrics = await analyzeAudioQuality(audioBlob, audioQualityThresholds);
+    if (isUploading) {
+      console.log('Save already in progress, ignoring duplicate request');
+      return;
+    }
 
-      if (!qualityMetrics.isValid || qualityMetrics.warnings.length > 0) {
-        setAudioQualityWarnings(qualityMetrics.warnings);
-        setShowQualityWarning(true);
+    setIsUploading(true);
+
+    const timeoutDuration = 45000;
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SAVE_TIMEOUT')), timeoutDuration)
+    );
+
+    try {
+      const savePromise = (async () => {
+        const qualityMetrics = await analyzeAudioQuality(audioBlob, audioQualityThresholds);
+
+        if (!qualityMetrics.isValid || qualityMetrics.warnings.length > 0) {
+          setAudioQualityWarnings(qualityMetrics.warnings);
+          setShowQualityWarning(true);
+          return { success: false, showWarning: true };
+        }
+
+        const result = await createRecording({
+          chapterId,
+          question,
+          audioBlob,
+          durationMs: qualityMetrics.durationMs,
+          silenceRatio: qualityMetrics.silenceRatio,
+          averageEnergy: qualityMetrics.averageEnergy
+        });
+
+        return result;
+      })();
+
+      const result = await Promise.race([savePromise, timeoutPromise]);
+
+      if (result.showWarning) {
         setIsUploading(false);
         return;
       }
 
-      const result = await createRecording({
-        chapterId,
-        question,
-        audioBlob,
-        durationMs: qualityMetrics.durationMs,
-        silenceRatio: qualityMetrics.silenceRatio,
-        averageEnergy: qualityMetrics.averageEnergy
-      });
-
       if (result.success) {
-        await markQuestionAsAnswered(storyId, chapterId, question);
+        markQuestionAsAnswered(storyId, chapterId, question).catch(err => {
+          console.error('Error marking question as answered:', err);
+        });
+
         clearRecording();
         setAudioQualityWarnings([]);
         setShowQualityWarning(false);
@@ -169,8 +326,13 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       } else {
         alert(result.error || 'Error al guardar la grabación');
       }
-    } catch (error) {
-      alert('Error al guardar la grabación');
+    } catch (error: any) {
+      console.error('Error saving recording:', error);
+      if (error.message === 'SAVE_TIMEOUT') {
+        alert('La grabación está tardando demasiado en guardarse. Por favor, verifica tu conexión e intenta de nuevo.');
+      } else {
+        alert('Error al guardar la grabación. Por favor, intenta de nuevo.');
+      }
     } finally {
       setIsUploading(false);
     }
@@ -179,22 +341,42 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const handleSaveAnyway = async () => {
     if (!audioBlob) return;
 
-    setIsUploading(true);
-    try {
-      const qualityMetrics = await analyzeAudioQuality(audioBlob, audioQualityThresholds);
+    if (isUploading) {
+      console.log('Save already in progress, ignoring duplicate request');
+      return;
+    }
 
-      const result = await createRecording({
-        chapterId,
-        question,
-        audioBlob,
-        durationMs: qualityMetrics.durationMs,
-        silenceRatio: qualityMetrics.silenceRatio,
-        averageEnergy: qualityMetrics.averageEnergy,
-        qualityWarnings: audioQualityWarnings
-      });
+    setIsUploading(true);
+
+    const timeoutDuration = 45000;
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SAVE_TIMEOUT')), timeoutDuration)
+    );
+
+    try {
+      const savePromise = (async () => {
+        const qualityMetrics = await analyzeAudioQuality(audioBlob, audioQualityThresholds);
+
+        const result = await createRecording({
+          chapterId,
+          question,
+          audioBlob,
+          durationMs: qualityMetrics.durationMs,
+          silenceRatio: qualityMetrics.silenceRatio,
+          averageEnergy: qualityMetrics.averageEnergy,
+          qualityWarnings: audioQualityWarnings
+        });
+
+        return result;
+      })();
+
+      const result = await Promise.race([savePromise, timeoutPromise]);
 
       if (result.success) {
-        await markQuestionAsAnswered(storyId, chapterId, question);
+        markQuestionAsAnswered(storyId, chapterId, question).catch(err => {
+          console.error('Error marking question as answered:', err);
+        });
+
         clearRecording();
         setAudioQualityWarnings([]);
         setShowQualityWarning(false);
@@ -202,8 +384,13 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       } else {
         alert(result.error || 'Error al guardar la grabación');
       }
-    } catch (error) {
-      alert('Error al guardar la grabación');
+    } catch (error: any) {
+      console.error('Error saving recording with warnings:', error);
+      if (error.message === 'SAVE_TIMEOUT') {
+        alert('La grabación está tardando demasiado en guardarse. Por favor, verifica tu conexión e intenta de nuevo.');
+      } else {
+        alert('Error al guardar la grabación. Por favor, intenta de nuevo.');
+      }
     } finally {
       setIsUploading(false);
     }
@@ -227,6 +414,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
           }
           setPlayingRecordingId(null);
           setIsPausedRecordingId(null);
+          releaseWakeLock();
         }
 
         const result = await deleteRecording(deleteConfirmModal.id);
@@ -254,51 +442,106 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     }
   };
 
-  const handleImageUpload = async (file: File) => {
+  const handleImageUpload = async (file: File, retryCount = 0) => {
     if (!file) return;
 
     setIsUploading(true);
+    setImageUploadError(null);
+
+    const timeoutDuration = 30000;
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), timeoutDuration)
+    );
+
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) {
-        alert('Usuario no autenticado');
-        return;
-      }
+      const uploadPromise = (async () => {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          throw new Error('Usuario no autenticado');
+        }
 
-      const { optimizeImage } = await import('../../lib/utils');
-      const optimizedImage = await optimizeImage(file);
-      const fileName = `${user.id}/${chapterId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const { optimizeImage } = await import('../../lib/utils');
+        const optimizedImage = await optimizeImage(file);
+        const fileName = `${user.id}/${chapterId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('images')
-        .upload(fileName, optimizedImage, {
-          contentType: 'image/webp',
-          upsert: false
-        });
+        const { error: uploadError } = await supabase.storage
+          .from('images')
+          .upload(fileName, optimizedImage, {
+            contentType: 'image/webp',
+            upsert: false
+          });
 
-      if (uploadError) throw uploadError;
+        if (uploadError) {
+          console.error('Storage upload error:', {
+            message: uploadError.message,
+            name: uploadError.name,
+            stack: uploadError.stack
+          });
+          throw uploadError;
+        }
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('images')
-        .getPublicUrl(fileName);
+        const { data: { publicUrl } } = supabase.storage
+          .from('images')
+          .getPublicUrl(fileName);
 
-      const { data: imageData, error } = await supabase
-        .from('images')
-        .insert([{
-          chapter_id: chapterId,
-          question: question,
-          image_url: publicUrl
-        }])
-        .select()
-        .single();
+        const { data: imageData, error } = await supabase
+          .from('images')
+          .insert([{
+            chapter_id: chapterId,
+            question: question,
+            image_url: publicUrl
+          }])
+          .select()
+          .single();
 
-      if (error) throw error;
+        if (error) {
+          console.error('Database insert error:', {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint
+          });
+          throw error;
+        }
+
+        return imageData;
+      })();
+
+      const imageData = await Promise.race([uploadPromise, timeoutPromise]);
 
       setImages(prev => [imageData, ...prev]);
-      await markQuestionAsAnswered(storyId, chapterId, question);
+      setImageUploadError(null);
+
+      markQuestionAsAnswered(storyId, chapterId, question).catch(err => {
+        console.error('Error marking question as answered:', err);
+      });
     } catch (error: any) {
-      console.error('Error uploading image:', error);
-      alert('Error al subir la imagen');
+      console.error('Error uploading image:', {
+        message: error.message,
+        type: error.name,
+        retryCount,
+        code: error.code,
+        details: error.details
+      });
+
+      if (error.message === 'TIMEOUT' && retryCount < 2) {
+        console.log(`Upload timeout, retrying (${retryCount + 1}/2)...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+        return handleImageUpload(file, retryCount + 1);
+      }
+
+      const errorMessage = error.message === 'TIMEOUT'
+        ? 'La carga de la imagen está tardando demasiado. Por favor, verifica tu conexión e intenta de nuevo.'
+        : error.code === '23505'
+        ? 'Esta imagen ya existe en el sistema.'
+        : error.code === '42501'
+        ? 'No tienes permisos para subir imágenes. Por favor, contacta al administrador.'
+        : 'Error al subir la imagen. Por favor, intenta de nuevo.';
+
+      setImageUploadError({
+        message: errorMessage,
+        details: `${error.message}${error.code ? ` (Código: ${error.code})` : ''}`
+      });
     } finally {
       setIsUploading(false);
     }
@@ -328,12 +571,13 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     }
   };
 
-  const handlePlaySavedRecording = (recordingId: string, audioUrl: string) => {
+  const handlePlaySavedRecording = async (recordingId: string, audioUrl: string) => {
     // If already playing or paused, resume
     if (playingRecordingId === recordingId && playingAudioRef.current) {
       if (isPausedRecordingId === recordingId) {
-        playingAudioRef.current.play();
+        await playingAudioRef.current.play();
         setIsPausedRecordingId(null);
+        await requestWakeLock();
       }
       return;
     }
@@ -342,6 +586,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     if (playingAudioRef.current) {
       playingAudioRef.current.pause();
       playingAudioRef.current = null;
+      releaseWakeLock();
     }
 
     const audio = new Audio(audioUrl);
@@ -350,25 +595,29 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       setPlayingRecordingId(null);
       setIsPausedRecordingId(null);
       playingAudioRef.current = null;
+      releaseWakeLock();
     };
 
     audio.onerror = () => {
       setPlayingRecordingId(null);
       setIsPausedRecordingId(null);
       playingAudioRef.current = null;
+      releaseWakeLock();
       alert('Error al reproducir el audio');
     };
 
     playingAudioRef.current = audio;
     setPlayingRecordingId(recordingId);
     setIsPausedRecordingId(null);
-    audio.play();
+    await audio.play();
+    await requestWakeLock();
   };
 
   const handlePauseRecording = (recordingId: string) => {
     if (playingAudioRef.current && playingRecordingId === recordingId) {
       playingAudioRef.current.pause();
       setIsPausedRecordingId(recordingId);
+      releaseWakeLock();
     }
   };
 
@@ -378,6 +627,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
       playingAudioRef.current = null;
       setPlayingRecordingId(null);
       setIsPausedRecordingId(null);
+      releaseWakeLock();
     }
   };
 
@@ -385,26 +635,90 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
   const questionState = getQuestionState(storyId, chapterId, question);
   const isSkipped = questionState === 'skipped';
 
-  const handleSkipQuestion = async () => {
-    const hasContent = await checkQuestionHasContent(chapterId, question);
+  const [isSkipping, setIsSkipping] = useState(false);
+  const [isReactivating, setIsReactivating] = useState(false);
 
-    if (hasContent && userPreferences?.show_skip_warning) {
-      setShowSkipModal(true);
-    } else {
-      await skipQuestion(storyId, chapterId, question);
+  const handleSkipQuestion = async () => {
+    if (isSkipping) {
+      console.log('Skip already in progress, ignoring duplicate request');
+      return;
+    }
+
+    setIsSkipping(true);
+
+    try {
+      const hasContent = await checkQuestionHasContent(chapterId, question);
+
+      if (hasContent && userPreferences?.show_skip_warning) {
+        setShowSkipModal(true);
+        setIsSkipping(false);
+      } else {
+        const result = await skipQuestion(storyId, chapterId, question);
+
+        if (!result.success) {
+          console.error('Error skipping question:', result.error);
+          alert('Error al saltar la pregunta. Por favor, intenta de nuevo.');
+        }
+      }
+    } catch (error: any) {
+      console.error('Error in handleSkipQuestion:', error);
+      alert('Error al saltar la pregunta. Por favor, intenta de nuevo.');
+    } finally {
+      setIsSkipping(false);
     }
   };
 
   const handleConfirmSkip = async () => {
-    if (skipDontShowAgain) {
-      await updateShowSkipWarning(false);
+    if (isSkipping) {
+      console.log('Skip already in progress, ignoring duplicate request');
+      return;
     }
-    await skipQuestion(storyId, chapterId, question);
-    setSkipDontShowAgain(false);
+
+    setIsSkipping(true);
+    setShowSkipModal(false);
+
+    try {
+      if (skipDontShowAgain) {
+        await updateShowSkipWarning(false);
+      }
+
+      const result = await skipQuestion(storyId, chapterId, question);
+
+      if (!result.success) {
+        console.error('Error skipping question:', result.error);
+        alert('Error al saltar la pregunta. Por favor, intenta de nuevo.');
+      }
+
+      setSkipDontShowAgain(false);
+    } catch (error: any) {
+      console.error('Error in handleConfirmSkip:', error);
+      alert('Error al saltar la pregunta. Por favor, intenta de nuevo.');
+    } finally {
+      setIsSkipping(false);
+    }
   };
 
   const handleReactivateQuestion = async () => {
-    await reactivateQuestion(storyId, chapterId, question);
+    if (isReactivating) {
+      console.log('Reactivate already in progress, ignoring duplicate request');
+      return;
+    }
+
+    setIsReactivating(true);
+
+    try {
+      const result = await reactivateQuestion(storyId, chapterId, question);
+
+      if (!result.success) {
+        console.error('Error reactivating question:', result.error);
+        alert('Error al reactivar la pregunta. Por favor, intenta de nuevo.');
+      }
+    } catch (error: any) {
+      console.error('Error in handleReactivateQuestion:', error);
+      alert('Error al reactivar la pregunta. Por favor, intenta de nuevo.');
+    } finally {
+      setIsReactivating(false);
+    }
   };
 
   return (
@@ -421,8 +735,10 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 variant="ghost"
                 size="sm"
                 className="text-gray-600 hover:text-gray-900"
+                loading={isSkipping}
+                disabled={isSkipping}
               >
-                <span className="hidden sm:inline">Saltar pregunta</span>
+                <span className="hidden sm:inline">{isSkipping ? 'Saltando...' : 'Saltar pregunta'}</span>
               </Button>
             ) : (
               <Button
@@ -431,8 +747,10 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 variant="ghost"
                 size="sm"
                 className="text-blue-600 hover:text-blue-700"
+                loading={isReactivating}
+                disabled={isReactivating}
               >
-                <span className="hidden sm:inline">Reactivar</span>
+                <span className="hidden sm:inline">{isReactivating ? 'Reactivando...' : 'Reactivar'}</span>
               </Button>
             )}
           </div>
@@ -474,6 +792,62 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                     Cancelar
                   </Button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Image Load Error */}
+        {imageLoadError && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 sm:p-4">
+            <div className="flex items-start">
+              <AlertTriangle className="h-5 w-5 text-yellow-600 mr-3 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm text-yellow-800 mb-2">{imageLoadError}</p>
+                <Button
+                  onClick={() => fetchImages(0, true)}
+                  variant="outline"
+                  size="sm"
+                  loading={loadingImages}
+                  disabled={loadingImages}
+                >
+                  {loadingImages ? 'Cargando...' : 'Reintentar'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Image Loading Indicator */}
+        {loadingImages && !imageLoadError && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
+            <div className="flex items-center">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-3"></div>
+              <p className="text-sm text-blue-800">Cargando imágenes...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Image Upload Error */}
+        {imageUploadError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 sm:p-4">
+            <div className="flex items-start">
+              <AlertTriangle className="h-5 w-5 text-red-600 mr-3 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h5 className="text-sm font-medium text-red-900 mb-1">
+                  Error al cargar la imagen
+                </h5>
+                <p className="text-sm text-red-800 mb-2">{imageUploadError.message}</p>
+                {imageUploadError.details && (
+                  <p className="text-xs text-red-700 mb-2">Detalles: {imageUploadError.details}</p>
+                )}
+                <Button
+                  onClick={() => setImageUploadError(null)}
+                  variant="outline"
+                  size="sm"
+                >
+                  Cerrar
+                </Button>
               </div>
             </div>
           </div>
@@ -806,36 +1180,22 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                     </div>
                   </div>
 
-                  {recording.transcript && editingTranscriptId !== recording.id && (
+                  {recording.transcript && (
                     <div className="p-3 sm:p-4">
-                      <TranscriptionDisplay
+                      <EditableTranscriptionDisplay
                         html={recording.transcript_formatted?.html}
                         plainText={recording.transcript}
                         qualityWarnings={recording.quality_warnings}
-                        onEdit={() => setEditingTranscriptId(recording.id)}
-                        onDelete={() => setDeleteConfirmModal({ type: 'transcript', id: recording.id })}
-                        recordingDate={recording.created_at}
-                      />
-                    </div>
-                  )}
-
-                  {editingTranscriptId === recording.id && (
-                    <div className="p-3 sm:p-4 bg-gray-50">
-                      <RichTextEditor
-                        initialValue={recording.transcript_formatted?.html || recording.transcript || ''}
                         onSave={async (html, plain) => {
                           const result = await updateRecordingTranscript(recording.id, {
                             html,
                             plain,
                             version: 1
                           });
-                          if (result.success) {
-                            setEditingTranscriptId(null);
-                          } else {
-                            alert(result.error || 'Error al guardar la transcripción');
-                          }
+                          return result;
                         }}
-                        onCancel={() => setEditingTranscriptId(null)}
+                        onDelete={() => setDeleteConfirmModal({ type: 'transcript', id: recording.id })}
+                        recordingDate={recording.created_at}
                       />
                     </div>
                   )}

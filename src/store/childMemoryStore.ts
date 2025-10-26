@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { MemoryWithDetails, CreateMemoryData, UpdateMemoryData, MemoryFilters, MemoryStats } from '../types/child';
 import { optimizeImage } from '../lib/utils';
+import { withTimeout, isTimeoutError } from '../lib/queryUtils';
 
 interface ChildMemoryState {
   memories: MemoryWithDetails[];
@@ -36,8 +37,7 @@ export const useChildMemoryStore = create<ChildMemoryState>((set, get) => ({
   fetchMemories: async (storyId: string) => {
     set({ loading: true });
     try {
-      // Fetch memories with all related data
-      const { data: memories, error: memoriesError } = await supabase
+      const memoriesQuery = supabase
         .from('memory_entries')
         .select(`
           *,
@@ -49,7 +49,16 @@ export const useChildMemoryStore = create<ChildMemoryState>((set, get) => ({
         .eq('story_id', storyId)
         .order('memory_date', { ascending: false });
 
-      if (memoriesError) throw memoriesError;
+      const { data: memories, error: memoriesError } = await withTimeout(
+        memoriesQuery,
+        15000,
+        'Loading memories timed out'
+      );
+
+      if (memoriesError) {
+        console.error('[ChildMemoryStore] Error fetching memories:', memoriesError);
+        throw memoriesError;
+      }
 
       const memoriesWithDetails: MemoryWithDetails[] = (memories || []).map(memory => ({
         ...memory,
@@ -62,7 +71,15 @@ export const useChildMemoryStore = create<ChildMemoryState>((set, get) => ({
       set({ memories: memoriesWithDetails });
       get().calculateStats();
     } catch (error: any) {
-      console.error('Error fetching memories:', error);
+      console.error('[ChildMemoryStore] Error in fetchMemories:', error);
+
+      if (isTimeoutError(error)) {
+        set({ memories: [] });
+        throw new Error('La carga de recuerdos tardó demasiado tiempo. Por favor, inténtalo de nuevo.');
+      }
+
+      set({ memories: [] });
+      throw error;
     } finally {
       set({ loading: false });
     }

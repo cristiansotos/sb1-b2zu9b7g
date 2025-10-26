@@ -99,9 +99,9 @@ const FamilySelector: React.FC<FamilySelectorProps> = ({ onManageFamily, onCreat
           <div className="py-1">
             {familyGroups.map(family => (
               <div key={family.id}>
-                <button
+                <div
                   onClick={() => handleSelectFamily(family.id)}
-                  className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${
+                  className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer ${
                     family.id === activeFamilyId ? 'bg-blue-50' : ''
                   }`}
                 >
@@ -136,12 +136,13 @@ const FamilySelector: React.FC<FamilySelectorProps> = ({ onManageFamily, onCreat
                           onManageFamily?.(family.id);
                         }}
                         className="ml-2 p-1.5 hover:bg-gray-200 rounded transition-colors flex-shrink-0"
+                        aria-label={`Manage ${family.name}`}
                       >
                         <Edit2 className="h-4 w-4 text-gray-600" />
                       </button>
                     )}
                   </div>
-                </button>
+                </div>
               </div>
             ))}
           </div>

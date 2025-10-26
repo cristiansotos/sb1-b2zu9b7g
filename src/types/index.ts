@@ -37,6 +37,11 @@ export interface FamilyMember {
   invited_by?: string;
   joined_at: string;
   user?: User;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  second_last_name?: string;
+  full_name?: string;
 }
 
 export interface StoryFamilyGroup {

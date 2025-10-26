@@ -12,6 +12,7 @@ import { ChaptersManager } from './ChaptersManager';
 import { AIModelSettings } from './AIModelSettings';
 import { AudioQualitySettings } from './AudioQualitySettings';
 import RolePermissionsManager from './RolePermissionsManager';
+import UserManagement from './UserManagement';
 
 interface AdminStats {
   totalUsers: number;
@@ -57,7 +58,6 @@ type AdminTab =
   | 'ai-config'
   | 'analytics'
   | 'feedback'
-  | 'internal-notes'
   | 'role-permissions';
 
 const AdminPanel: React.FC = () => {
@@ -82,9 +82,6 @@ const AdminPanel: React.FC = () => {
   const [aiModels, setAiModels] = useState([]);
   const [audioQualitySettings, setAudioQualitySettings] = useState<any>(null);
   const [apiKeys, setApiKeys] = useState([]);
-  const [featureFlags, setFeatureFlags] = useState([]);
-  const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
-  const [newApiKey, setNewApiKey] = useState({ service_name: '', key_value: '' });
   const [analytics, setAnalytics] = useState({
     totalUsers: 0,
     totalStories: 0,
@@ -120,7 +117,6 @@ const AdminPanel: React.FC = () => {
     }
     fetchAdminData();
     fetchSystemConfiguration();
-    fetchAnalytics();
   }, [isAdmin, navigate]);
 
   useEffect(() => {
@@ -209,18 +205,12 @@ const AdminPanel: React.FC = () => {
         .from('api_keys')
         .select('*')
         .order('service_name');
-      
-      if (apiError) throw apiError;
-      setApiKeys(apiKeysData || []);
 
-      // Fetch Feature Flags
-      const { data: flagsData, error: flagsError } = await supabase
-        .from('feature_flags')
-        .select('*')
-        .order('flag_name');
-      
-      if (flagsError) throw flagsError;
-      setFeatureFlags(flagsData || []);
+      if (apiError && apiError.code !== 'PGRST116') {
+        console.warn('API keys table not found or not accessible');
+      } else {
+        setApiKeys(apiKeysData || []);
+      }
     } catch (error) {
       console.error('Error fetching system configuration:', error);
     }
@@ -232,7 +222,7 @@ const AdminPanel: React.FC = () => {
       const { data: { users: authUsers } } = await supabase.auth.admin.listUsers();
       const totalUsersCount = authUsers?.length || 0;
 
-      // Get basic counts
+      // Get basic counts in parallel
       const [storiesCount, recordingsCount, imagesCount] = await Promise.all([
         supabase.from('stories').select('*', { count: 'exact', head: true }),
         supabase.from('recordings').select('*', { count: 'exact', head: true }),
@@ -260,50 +250,11 @@ const AdminPanel: React.FC = () => {
         supabase.from('recordings').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo.toISOString())
       ]);
 
-      // Calculate monthly growth for last 6 months
-      const monthlyGrowth = [];
-      const now = new Date();
-
-      for (let i = 5; i >= 0; i--) {
-        const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const nextMonthDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-        const monthName = monthDate.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
-
-        // Count users created in this month
-        const monthUsers = authUsers?.filter(u => {
-          const created = new Date(u.created_at);
-          return created >= monthDate && created < nextMonthDate;
-        }).length || 0;
-
-        // Count stories in this month
-        const { count: monthStories } = await supabase
-          .from('stories')
-          .select('*', { count: 'exact', head: true })
-          .gte('created_at', monthDate.toISOString())
-          .lt('created_at', nextMonthDate.toISOString());
-
-        // Count recordings in this month
-        const { count: monthRecordings } = await supabase
-          .from('recordings')
-          .select('*', { count: 'exact', head: true })
-          .gte('created_at', monthDate.toISOString())
-          .lt('created_at', nextMonthDate.toISOString());
-
-        monthlyGrowth.push({
-          month: monthName,
-          users: monthUsers,
-          stories: monthStories || 0,
-          recordings: monthRecordings || 0
-        });
-      }
-
-      // Get storage usage (estimated)
-      const { data: recordingsWithDuration } = await supabase
-        .from('recordings')
-        .select('audio_duration_ms');
-
-      const audioStorage = recordingsWithDuration?.reduce((sum, r) => sum + ((r.audio_duration_ms || 0) / 1000 * 0.1), 0) || 0;
-      const imageStorage = (imagesCount.count || 0) * 0.5;
+      // Estimate storage usage without fetching all data
+      const avgRecordingSize = 2.5;
+      const avgImageSize = 0.5;
+      const audioStorage = (recordingsCount.count || 0) * avgRecordingSize;
+      const imageStorage = (imagesCount.count || 0) * avgImageSize;
 
       setAnalytics({
         totalUsers: totalUsersCount,
@@ -320,7 +271,7 @@ const AdminPanel: React.FC = () => {
           images: imageStorage
         },
         topStorageUsers: [],
-        monthlyGrowth
+        monthlyGrowth: []
       });
     } catch (error) {
       console.error('Error fetching analytics:', error);
@@ -518,64 +469,6 @@ const AdminPanel: React.FC = () => {
     }
   };
 
-  const addApiKey = async () => {
-    if (!newApiKey.service_name.trim() || !newApiKey.key_value.trim()) {
-      alert('Por favor completa todos los campos');
-      return;
-    }
-
-    try {
-      const { error } = await supabase
-        .from('api_keys')
-        .insert([newApiKey]);
-      
-      if (error) throw error;
-      
-      setNewApiKey({ service_name: '', key_value: '' });
-      setShowAddApiKeyModal(false);
-      await fetchSystemConfiguration();
-      alert('Clave API añadida exitosamente');
-    } catch (error) {
-      console.error('Error adding API key:', error);
-      alert('Error al añadir la clave API');
-    }
-  };
-
-  const deleteApiKey = async (keyId: string) => {
-    if (!confirm('¿Estás seguro de que quieres eliminar esta clave API?')) return;
-
-    try {
-      const { error } = await supabase
-        .from('api_keys')
-        .delete()
-        .eq('id', keyId);
-      
-      if (error) throw error;
-      
-      await fetchSystemConfiguration();
-      alert('Clave API eliminada exitosamente');
-    } catch (error) {
-      console.error('Error deleting API key:', error);
-      alert('Error al eliminar la clave API');
-    }
-  };
-
-  const toggleFeatureFlag = async (flagId: string, currentStatus: boolean) => {
-    try {
-      const { error } = await supabase
-        .from('feature_flags')
-        .update({ is_enabled: !currentStatus })
-        .eq('id', flagId);
-      
-      if (error) throw error;
-      
-      await fetchSystemConfiguration();
-      alert('Funcionalidad actualizada exitosamente');
-    } catch (error) {
-      console.error('Error toggling feature flag:', error);
-      alert('Error al actualizar la funcionalidad');
-    }
-  };
 
   const handleHeroImageUpload = async (file: File) => {
     if (!file) {
@@ -856,24 +749,27 @@ const AdminPanel: React.FC = () => {
     setConfirmModal({
       isOpen: true,
       title: `${action.charAt(0).toUpperCase() + action.slice(1)} Usuario`,
-      message: `¿Estás seguro de que quieres ${action} la cuenta de ${user.email}?`,
+      message: `¿Estás seguro de que quieres ${action} la cuenta de ${user.email}?${user.is_active ? ' El usuario no podrá iniciar sesión pero sus datos permanecerán en el sistema.' : ''}`,
       onConfirm: async () => {
         try {
-          // TODO: Implement user status toggle
-          console.log(`Toggle user status: ${user.id}`);
           setConfirmModal(prev => ({ ...prev, loading: true }));
-          
-          // Simulate API call
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // Update local state
-          setUsers(prev => prev.map(u => 
+
+          const { error } = await supabase.rpc('deactivate_user', {
+            target_user_id: user.id,
+            deactivate: user.is_active
+          });
+
+          if (error) throw error;
+
+          setUsers(prev => prev.map(u =>
             u.id === user.id ? { ...u, is_active: !u.is_active } : u
           ));
-          
+
+          alert(`Usuario ${action} exitosamente`);
           setConfirmModal(prev => ({ ...prev, isOpen: false, loading: false }));
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error toggling user status:', error);
+          alert(`Error al ${action} usuario: ${error.message}`);
           setConfirmModal(prev => ({ ...prev, loading: false }));
         }
       },
@@ -908,25 +804,31 @@ const AdminPanel: React.FC = () => {
   const handleDeleteUser = (user: AdminUser) => {
     setConfirmModal({
       isOpen: true,
-      title: 'Eliminar Usuario',
-      message: `¿Estás seguro de que quieres eliminar permanentemente la cuenta de ${user.email}? Esta acción eliminará todas sus historias, grabaciones e imágenes y NO se puede deshacer.`,
+      title: 'Eliminar Usuario Permanentemente',
+      message: `⚠️ ADVERTENCIA: ¿Estás absolutamente seguro de que quieres eliminar permanentemente la cuenta de ${user.email}? Esta acción:
+
+• Eliminará TODAS sus historias
+• Eliminará TODAS sus grabaciones
+• Eliminará TODAS sus imágenes
+• Eliminará su perfil completamente
+• NO SE PUEDE DESHACER
+
+Si solo quieres que el usuario no pueda iniciar sesión, usa el botón de desactivar en su lugar.`,
       onConfirm: async () => {
         try {
           setConfirmModal(prev => ({ ...prev, loading: true }));
-          
-          // TODO: Implement user deletion with cascade
-          console.log(`Delete user: ${user.id}`);
-          
-          // Simulate API call
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Update local state
+
+          const { error } = await supabase.auth.admin.deleteUser(user.id);
+
+          if (error) throw error;
+
           setUsers(prev => prev.filter(u => u.id !== user.id));
-          
+
+          alert('Usuario eliminado permanentemente');
           setConfirmModal(prev => ({ ...prev, isOpen: false, loading: false }));
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error deleting user:', error);
-          alert('Error al eliminar usuario');
+          alert(`Error al eliminar usuario: ${error.message}`);
           setConfirmModal(prev => ({ ...prev, loading: false }));
         }
       },
@@ -935,10 +837,6 @@ const AdminPanel: React.FC = () => {
   };
 
 
-  const maskApiKey = (key: string) => {
-    if (key.length <= 8) return key;
-    return key.substring(0, 4) + '•'.repeat(key.length - 8) + key.substring(key.length - 4);
-  };
 
   const adminTabs = [
     { id: 'users' as AdminTab, label: 'Gestión de Usuarios', icon: Users },
@@ -947,219 +845,27 @@ const AdminPanel: React.FC = () => {
     { id: 'hero-carousel' as AdminTab, label: 'Carrusel Hero', icon: Image },
     { id: 'ai-config' as AdminTab, label: 'Configuración de IA', icon: Brain },
     { id: 'analytics' as AdminTab, label: 'Análisis y Reportes', icon: BarChart3 },
-    { id: 'feedback' as AdminTab, label: 'Gestión de Feedback', icon: MessageSquare },
-    { id: 'internal-notes' as AdminTab, label: 'Notas Internas', icon: FileText }
+    { id: 'feedback' as AdminTab, label: 'Gestión de Feedback', icon: MessageSquare }
   ];
 
   const renderTabContent = () => {
     switch (activeTab) {
       case 'users':
         return (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Usuarios ({filteredUsers.length} de {users.length})
-              </h3>
-              
-              <div className="flex items-center space-x-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    placeholder="Buscar por email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 w-64"
-                  />
-                </div>
-                
-                <Button
-                  onClick={() => exportData('users')}
-                  icon={Download}
-                  variant="outline"
-                  size="sm"
-                  disabled={filteredUsers.length === 0}
-                >
-                  Exportar CSV
-                </Button>
-              </div>
-            </div>
-            
-            {filteredUsers.length === 0 ? (
-              <div className="text-center py-8">
-                <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500">
-                  {searchTerm 
-                    ? "No se encontraron usuarios que coincidan con la búsqueda"
-                    : "No hay usuarios registrados"
-                  }
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th 
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={() => handleSort('email')}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <span>Email</span>
-                          {getSortIcon('email')}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={() => handleSort('stories_count')}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <span>Historias</span>
-                          {getSortIcon('stories_count')}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={() => handleSort('recordings_count')}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <span>Grabaciones</span>
-                          {getSortIcon('recordings_count')}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={() => handleSort('images_count')}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <span>Imágenes</span>
-                          {getSortIcon('images_count')}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Completado
-                      </th>
-                      <th 
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={() => handleSort('tokens_used')}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <span>Tokens</span>
-                          {getSortIcon('tokens_used')}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Libro Físico
-                      </th>
-                      <th 
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={() => handleSort('last_activity')}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <span>Última Actividad</span>
-                          {getSortIcon('last_activity')}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Estado
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredUsers.map((user) => (
-                      <tr key={user.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {user.email}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {user.stories_count}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {user.recordings_count}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {user.images_count}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <div className="flex items-center space-x-2">
-                            <div className="w-16 bg-gray-200 rounded-full h-2">
-                              <div
-                                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${user.completion_ratio}%` }}
-                              />
-                            </div>
-                            <span className="text-xs">{user.completion_ratio}%</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {user.tokens_used.toLocaleString()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <span className={`px-2 py-1 rounded-full text-xs ${
-                            user.book_interest 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-gray-100 text-gray-800'
-                          }`}>
-                            {user.book_interest ? 'Interesado' : 'No solicitado'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {new Date(user.last_activity).toLocaleDateString('es-ES')}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <span className={`px-2 py-1 rounded-full text-xs ${
-                            user.is_active 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {user.is_active ? 'Activo' : 'Inactivo'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          <div className="flex items-center space-x-2">
-                            <Button
-                              onClick={() => handleViewUserStories(user.id)}
-                              icon={Eye}
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              title="Ver historias del usuario"
-                            />
-                            <Button
-                              onClick={() => handleToggleUserStatus(user)}
-                              icon={user.is_active ? UserX : UserCheck}
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              title={user.is_active ? 'Desactivar usuario' : 'Activar usuario'}
-                            />
-                            <Button
-                              onClick={() => handleResetPassword(user)}
-                              icon={Key}
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              title="Resetear contraseña"
-                            />
-                            <Button
-                              onClick={() => handleDeleteUser(user)}
-                              icon={Trash2}
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                              title="Eliminar usuario"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <UserManagement
+            users={users}
+            filteredUsers={filteredUsers}
+            searchTerm={searchTerm}
+            sortField={sortField}
+            sortDirection={sortDirection}
+            onSearchChange={setSearchTerm}
+            onSort={handleSort}
+            onExport={() => exportData('users')}
+            onViewStories={handleViewUserStories}
+            onToggleStatus={handleToggleUserStatus}
+            onResetPassword={handleResetPassword}
+            onDeleteUser={handleDeleteUser}
+          />
         );
 
       case 'chapters-questions':
@@ -1623,98 +1329,6 @@ const AdminPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Historical Growth Trends */}
-            {analytics.monthlyGrowth.length > 0 && (
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-6">Crecimiento Histórico (Últimos 6 Meses)</h3>
-
-                <div className="space-y-6">
-                  {/* Users Growth */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-700">Nuevos Usuarios por Mes</span>
-                      <Users className="h-4 w-4 text-blue-500" />
-                    </div>
-                    <div className="space-y-2">
-                      {analytics.monthlyGrowth.map((month) => {
-                        const maxUsers = Math.max(...analytics.monthlyGrowth.map(m => m.users), 1);
-                        const percentage = (month.users / maxUsers) * 100;
-                        return (
-                          <div key={month.month} className="flex items-center space-x-3">
-                            <span className="text-xs text-gray-500 w-16">{month.month}</span>
-                            <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
-                              <div
-                                className="bg-blue-500 h-6 rounded-full transition-all duration-500"
-                                style={{ width: `${percentage}%` }}
-                              />
-                              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
-                                {month.users}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Stories Growth */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-700">Historias Creadas por Mes</span>
-                      <BookOpen className="h-4 w-4 text-green-500" />
-                    </div>
-                    <div className="space-y-2">
-                      {analytics.monthlyGrowth.map((month) => {
-                        const maxStories = Math.max(...analytics.monthlyGrowth.map(m => m.stories), 1);
-                        const percentage = (month.stories / maxStories) * 100;
-                        return (
-                          <div key={month.month} className="flex items-center space-x-3">
-                            <span className="text-xs text-gray-500 w-16">{month.month}</span>
-                            <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
-                              <div
-                                className="bg-green-500 h-6 rounded-full transition-all duration-500"
-                                style={{ width: `${percentage}%` }}
-                              />
-                              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
-                                {month.stories}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Recordings Growth */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-700">Grabaciones por Mes</span>
-                      <Mic className="h-4 w-4 text-purple-500" />
-                    </div>
-                    <div className="space-y-2">
-                      {analytics.monthlyGrowth.map((month) => {
-                        const maxRecordings = Math.max(...analytics.monthlyGrowth.map(m => m.recordings), 1);
-                        const percentage = (month.recordings / maxRecordings) * 100;
-                        return (
-                          <div key={month.month} className="flex items-center space-x-3">
-                            <span className="text-xs text-gray-500 w-16">{month.month}</span>
-                            <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
-                              <div
-                                className="bg-purple-500 h-6 rounded-full transition-all duration-500"
-                                style={{ width: `${percentage}%` }}
-                              />
-                              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
-                                {month.recordings}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         );
 
@@ -1751,21 +1365,6 @@ const AdminPanel: React.FC = () => {
           </div>
         );
 
-      case 'internal-notes':
-        return (
-          <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-8 text-center">
-            <MessageSquare className="h-16 w-16 text-purple-500 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              Notas Internas
-            </h3>
-            <p className="text-gray-600 mb-6">
-              Sistema de notas internas para el equipo administrativo.
-            </p>
-            <p className="text-sm text-gray-500">
-              Esta funcionalidad estará disponible próximamente.
-            </p>
-          </div>
-        );
 
       default:
         return null;
@@ -1888,46 +1487,6 @@ const AdminPanel: React.FC = () => {
       </Layout>
       
       {/* Add API Key Modal */}
-      <Modal
-        isOpen={showAddApiKeyModal}
-        onClose={() => setShowAddApiKeyModal(false)}
-        title="Añadir Clave API"
-      >
-        <div className="space-y-4">
-          <Input
-            label="Nombre del Servicio"
-            value={newApiKey.service_name}
-            onChange={(e) => setNewApiKey({ ...newApiKey, service_name: e.target.value })}
-            placeholder="ej: openai, elevenlabs"
-          />
-          
-          <Input
-            label="Valor de la Clave"
-            type="password"
-            value={newApiKey.key_value}
-            onChange={(e) => setNewApiKey({ ...newApiKey, key_value: e.target.value })}
-            placeholder="Pega aquí la clave API"
-          />
-          
-          <div className="flex space-x-3 pt-4">
-            <Button
-              variant="outline"
-              onClick={() => setShowAddApiKeyModal(false)}
-              fullWidth
-            >
-              Cancelar
-            </Button>
-            
-            <Button
-              onClick={addApiKey}
-              fullWidth
-            >
-              Guardar
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
       {/* Confirmation Modal */}
       <Modal
         isOpen={confirmModal.isOpen}

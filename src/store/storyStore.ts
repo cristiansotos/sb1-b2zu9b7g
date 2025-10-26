@@ -3,10 +3,13 @@ import { supabase } from '../lib/supabase';
 import { Story, StoryFamilyGroup } from '../types';
 import { optimizeImage, validateDateOfBirth } from '../lib/utils';
 import { requestDeduplicator } from '../lib/requestCache';
+import { withTimeout, getUserFriendlyError, isTimeoutError } from '../lib/queryUtils';
+import { performanceMonitor } from '../lib/performanceMonitor';
 
 interface StoryState {
   stories: Story[];
   loading: boolean;
+  reset: () => void;
   fetchStoriesForFamily: (familyGroupId: string) => Promise<void>;
   createStory: (data: {
     title: string;
@@ -27,15 +30,54 @@ interface StoryState {
   revokeShareToken: (storyId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
+let backgroundRefreshInProgress = false;
+let lastRefreshTime = 0;
+let backgroundRefreshTimeoutId: NodeJS.Timeout | null = null;
+let currentActiveFamilyId: string | null = null;
+const MIN_REFRESH_INTERVAL = 5000;
+
 export const useStoryStore = create<StoryState>((set, get) => ({
   stories: [],
   loading: false,
 
+  reset: () => {
+    console.log('[StoryStore] Resetting store');
+    backgroundRefreshInProgress = false;
+    // Cancel any pending background refresh
+    if (backgroundRefreshTimeoutId) {
+      clearTimeout(backgroundRefreshTimeoutId);
+      backgroundRefreshTimeoutId = null;
+    }
+    currentActiveFamilyId = null;
+    set({ stories: [], loading: false });
+  },
+
   fetchStoriesForFamily: async (familyGroupId: string) => {
-    return requestDeduplicator.deduplicate(`fetchStoriesForFamily:${familyGroupId}`, async () => {
-      set({ loading: true });
-      try {
-      const { data: storyFamilies, error: sfError } = await supabase
+    const cacheKey = `fetchStoriesForFamily:${familyGroupId}`;
+    const perfMark = `fetchStoriesForFamily_${familyGroupId}_${Date.now()}`;
+
+    performanceMonitor.mark(perfMark);
+    console.log('[StoryStore] fetchStoriesForFamily called for:', familyGroupId);
+
+    // Cancel any pending background refresh from previous family
+    if (backgroundRefreshTimeoutId) {
+      console.log('[StoryStore] Cancelling previous background refresh');
+      clearTimeout(backgroundRefreshTimeoutId);
+      backgroundRefreshTimeoutId = null;
+      backgroundRefreshInProgress = false;
+    }
+
+    // Update active family ID
+    currentActiveFamilyId = familyGroupId;
+
+    // Clear any stale cached data for this family AND related patterns
+    requestDeduplicator.invalidateCachePattern(familyGroupId);
+
+    set({ loading: true });
+    try {
+      console.log('[StoryStore] Fetching stories for family:', familyGroupId);
+
+      const storiesQuery = supabase
         .from('story_family_groups')
         .select(`
           story_id,
@@ -56,65 +98,115 @@ export const useStoryStore = create<StoryState>((set, get) => ({
         `)
         .eq('family_group_id', familyGroupId);
 
-      if (sfError) throw sfError;
+      const { data: storyFamilies, error: sfError } = await withTimeout(
+        storiesQuery,
+        25000,
+        'Loading stories timed out'
+      );
 
-      const stories = (storyFamilies || []).map((sf: any) => sf.stories).filter(Boolean);
-
-      // Set initial stories immediately
-      set({ stories, loading: false });
-
-      // Update progress for adult mode stories in parallel (non-blocking)
-      const adultStories = stories.filter(s => s.mode === 'adult');
-      if (adultStories.length > 0) {
-        // Fire progress updates in parallel without waiting
-        Promise.all(
-          adultStories.map(async (story) => {
-            try {
-              await supabase.rpc('update_story_progress', { story_id_param: story.id });
-            } catch (err) {
-              console.error(`Error updating progress for story ${story.id}:`, err);
-            }
-          })
-        ).then(async () => {
-          // After progress updates complete, silently refresh stories
-          try {
-            const { data } = await supabase
-              .from('story_family_groups')
-              .select(`
-                story_id,
-                stories (
-                  id,
-                  user_id,
-                  created_by,
-                  title,
-                  relationship,
-                  photo_url,
-                  progress,
-                  is_complete,
-                  mode,
-                  date_of_birth,
-                  created_at,
-                  updated_at
-                )
-              `)
-              .eq('family_group_id', familyGroupId);
-
-            if (data) {
-              const updatedStories = data.map((sf: any) => sf.stories).filter(Boolean);
-              set({ stories: updatedStories });
-            }
-          } catch (err) {
-            console.error('Error refreshing stories after progress update:', err);
-          }
-        }).catch(err => {
-          console.error('Error in progress update batch:', err);
-        });
-        }
-      } catch (error) {
-        console.error('Error fetching stories:', error);
-        set({ loading: false });
+      if (sfError) {
+        console.error('[StoryStore] Error fetching stories:', sfError);
+        set({ loading: false, stories: [] });
+        throw sfError;
       }
-    });
+
+      console.log('[StoryStore] Successfully fetched', storyFamilies?.length || 0, 'story associations');
+      const stories = (storyFamilies || []).map((sf: any) => sf.stories).filter(Boolean);
+      console.log('[StoryStore] Mapped to', stories.length, 'stories');
+
+      set({ stories, loading: false });
+      performanceMonitor.measure(`fetchStoriesForFamily_${familyGroupId}`, perfMark);
+
+      const adultStories = stories.filter((s: Story) => s.mode === 'adult');
+      const now = Date.now();
+      const timeSinceLastRefresh = now - lastRefreshTime;
+
+      if (adultStories.length > 0 && !backgroundRefreshInProgress && timeSinceLastRefresh > MIN_REFRESH_INTERVAL) {
+        console.log('[StoryStore] Scheduling background progress update for', adultStories.length, 'adult stories');
+        backgroundRefreshInProgress = true;
+        lastRefreshTime = now;
+
+        // Use setTimeout to defer this to next tick, ensuring UI is responsive
+        backgroundRefreshTimeoutId = setTimeout(() => {
+          // Capture the family ID at the time of scheduling
+          const capturedFamilyId = familyGroupId;
+
+          Promise.allSettled(
+            adultStories.map(async (story: Story) => {
+              try {
+                await withTimeout(
+                  supabase.rpc('update_story_progress', { story_id_param: story.id }),
+                  8000
+                );
+              } catch (err) {
+                if (!isTimeoutError(err)) {
+                  console.error(`[StoryStore] Error updating progress for story ${story.id}:`, err);
+                }
+              }
+            })
+          ).then(async () => {
+            try {
+              // CRITICAL: Only update if we're still on the same family
+              if (currentActiveFamilyId !== capturedFamilyId) {
+                console.log('[StoryStore] Skipping background refresh - family changed from', capturedFamilyId, 'to', currentActiveFamilyId);
+                return;
+              }
+
+              console.log('[StoryStore] Refreshing stories after progress update');
+              const refreshQuery = supabase
+                .from('story_family_groups')
+                .select(`
+                  story_id,
+                  stories (
+                    id,
+                    user_id,
+                    created_by,
+                    title,
+                    relationship,
+                    photo_url,
+                    progress,
+                    is_complete,
+                    mode,
+                    date_of_birth,
+                    created_at,
+                    updated_at
+                  )
+                `)
+                .eq('family_group_id', capturedFamilyId);
+
+              const { data } = await withTimeout(refreshQuery, 10000);
+
+              // Double-check family hasn't changed during the async operation
+              if (currentActiveFamilyId !== capturedFamilyId) {
+                console.log('[StoryStore] Skipping state update - family changed during refresh');
+                return;
+              }
+
+              if (data) {
+                const updatedStories = data.map((sf: any) => sf.stories).filter(Boolean);
+                console.log('[StoryStore] Background refresh complete, updated', updatedStories.length, 'stories');
+                set({ stories: updatedStories });
+              }
+            } catch (err) {
+              if (!isTimeoutError(err)) {
+                console.error('[StoryStore] Error refreshing stories after progress update:', err);
+              }
+            } finally {
+              backgroundRefreshInProgress = false;
+              backgroundRefreshTimeoutId = null;
+            }
+          });
+        }, 100);
+      } else if (backgroundRefreshInProgress) {
+        console.log('[StoryStore] Skipping background refresh - already in progress');
+      } else if (timeSinceLastRefresh <= MIN_REFRESH_INTERVAL) {
+        console.log('[StoryStore] Skipping background refresh - too soon since last refresh');
+      }
+    } catch (error: any) {
+      console.error('[StoryStore] Error in fetchStoriesForFamily:', error);
+      set({ loading: false, stories: [] });
+      throw error;
+    }
   },
 
   createStory: async (data) => {

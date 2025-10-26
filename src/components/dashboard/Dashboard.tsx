@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Settings, UserCircle } from 'lucide-react';
+import { Plus, Settings, UserCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import Layout from '../layout/Layout';
 import Button from '../ui/Button';
 import StoryCard from './StoryCard';
@@ -14,6 +14,8 @@ import { useStoryStore } from '../../store/storyStore';
 import { useFamilyGroupStore } from '../../store/familyGroupStore';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { getUserFriendlyError, isTimeoutError } from '../../lib/queryUtils';
+import { requestDeduplicator } from '../../lib/requestCache';
 
 const Dashboard: React.FC = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -21,8 +23,9 @@ const Dashboard: React.FC = () => {
   const [managingFamilyId, setManagingFamilyId] = useState<string | null>(null);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [userFirstName, setUserFirstName] = useState<string | null>(null);
+  const [storiesError, setStoriesError] = useState<string | null>(null);
   const { user, isAdmin, signOut } = useAuthStore();
-  const { stories, loading, fetchStoriesForFamily } = useStoryStore();
+  const { stories, loading, fetchStoriesForFamily, reset: resetStoryStore } = useStoryStore();
   const { familyGroups, activeFamilyId, fetchFamilyGroups, getActiveFamily } = useFamilyGroupStore();
   const navigate = useNavigate();
 
@@ -49,9 +52,41 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     if (activeFamilyId) {
-      fetchStoriesForFamily(activeFamilyId);
+      console.log('[Dashboard] Active family changed to:', activeFamilyId);
+      resetStoryStore();
+      setStoriesError(null);
+
+      // Clear any pending requests for previous family
+      requestDeduplicator.invalidateCachePattern('fetchStoriesForFamily');
+
+      fetchStoriesForFamily(activeFamilyId)
+        .catch((error) => {
+          console.error('[Dashboard] Error fetching stories:', error);
+          setStoriesError(getUserFriendlyError(error));
+        });
     }
-  }, [activeFamilyId, fetchStoriesForFamily]);
+
+    return () => {
+      console.log('[Dashboard] Cleaning up on unmount or family change');
+    };
+  }, [activeFamilyId, fetchStoriesForFamily, resetStoryStore]);
+
+  const retryFetchStories = () => {
+    if (activeFamilyId) {
+      console.log('[Dashboard] Retrying story fetch for family:', activeFamilyId);
+      setStoriesError(null);
+      resetStoryStore();
+
+      // Small delay to ensure UI updates
+      setTimeout(() => {
+        fetchStoriesForFamily(activeFamilyId)
+          .catch((error) => {
+            console.error('[Dashboard] Error fetching stories:', error);
+            setStoriesError(getUserFriendlyError(error));
+          });
+      }, 100);
+    }
+  };
 
   return (
     <Layout>
@@ -115,6 +150,25 @@ const Dashboard: React.FC = () => {
         {loading ? (
           <div className="flex justify-center py-12">
             <LoadingSpinner message="Cargando historias..." />
+          </div>
+        ) : storiesError ? (
+          <div className="flex justify-center py-12">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md">
+              <div className="flex items-start space-x-4 mb-6">
+                <AlertCircle className="h-8 w-8 text-red-600 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-red-900 mb-2">Error al cargar historias</h3>
+                  <p className="text-sm text-red-800">{storiesError}</p>
+                </div>
+              </div>
+              <Button
+                onClick={retryFetchStories}
+                icon={RefreshCw}
+                className="w-full bg-red-600 hover:bg-red-700 text-white"
+              >
+                Reintentar
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">

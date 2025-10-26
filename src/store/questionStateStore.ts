@@ -29,6 +29,7 @@ interface QuestionStateStore {
   userPreferences: UserPreferences | null;
   loading: boolean;
 
+  reset: () => void;
   fetchQuestionStates: (storyId: string) => Promise<void>;
   getQuestionState: (storyId: string, chapterId: string, questionText: string) => QuestionState;
   skipQuestion: (storyId: string, chapterId: string, questionText: string) => Promise<{ success: boolean; error?: string }>;
@@ -45,6 +46,13 @@ export const useQuestionStateStore = create<QuestionStateStore>((set, get) => ({
   questionStates: new Map(),
   userPreferences: null,
   loading: false,
+
+  reset: () => {
+    set({
+      questionStates: new Map(),
+      loading: false
+    });
+  },
 
   fetchQuestionStates: async (storyId: string) => {
     set({ loading: true });
@@ -269,10 +277,6 @@ export const useQuestionStateStore = create<QuestionStateStore>((set, get) => ({
           set({ questionStates: newMap });
         }
       }
-
-      await supabase.rpc('update_story_progress', {
-        story_id_param: storyId
-      });
 
       return { success: true };
     } catch (error: any) {

@@ -38,5 +38,3 @@ export const MEMORY_TAGS = [
   { name: 'Logro', type: 'achievement' },
   { name: 'Habilidad nueva', type: 'achievement' }
 ];
-
-export const ADMIN_EMAIL = 'cristian.sotos.v@gmail.com';

@@ -27,7 +27,8 @@ const StoryRecorder: React.FC = () => {
     fetchAllRecordingsForStory,
     transcribeRecording,
     setSelectedChapter,
-    updateStoryProgress
+    updateStoryProgress,
+    reset: resetChapterStore
   } = useChapterStore();
   const [story, setStory] = useState(null);
   const [untranscribedCount, setUntranscribedCount] = useState(0);
@@ -35,13 +36,20 @@ const StoryRecorder: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [initialNavigationDone, setInitialNavigationDone] = useState(false);
 
-  const { findFirstIncompleteQuestion, fetchQuestionStates } = useQuestionStateStore();
+  const { findFirstIncompleteQuestion, fetchQuestionStates, reset: resetQuestionStateStore } = useQuestionStateStore();
 
   useEffect(() => {
     if (stories.length === 0) {
       fetchStories();
     }
   }, [fetchStories, stories.length]);
+
+  // Reset state when storyId changes
+  useEffect(() => {
+    setInitialNavigationDone(false);
+    resetChapterStore();
+    resetQuestionStateStore();
+  }, [storyId, resetChapterStore, resetQuestionStateStore]);
 
   useEffect(() => {
     if (storyId && stories.length > 0) {
@@ -61,6 +69,7 @@ const StoryRecorder: React.FC = () => {
 
   useEffect(() => {
     const initializeChapterNavigation = async () => {
+      // Only initialize if we have chapters, no chapter selected, and haven't done initial navigation for this story
       if (chapters.length > 0 && !selectedChapterId && storyId && !initialNavigationDone) {
         const firstIncomplete = await findFirstIncompleteQuestion(storyId, chapters);
 
@@ -96,18 +105,23 @@ const StoryRecorder: React.FC = () => {
 
   const handleRecordingComplete = async () => {
     if (storyId && story) {
-      await updateStoryProgress(storyId);
-
-      // Update only the current story's progress locally without full refetch
-      const { data: updatedStory } = await supabase
-        .from('stories')
-        .select('progress')
-        .eq('id', storyId)
-        .single();
-
-      if (updatedStory) {
-        setStory({ ...story, progress: updatedStory.progress });
-      }
+      // Update progress - this is optional UI feedback, runs in background
+      // Progress already updated by createRecording, but this ensures UI is in sync
+      updateStoryProgress(storyId).then(() => {
+        // Fetch updated progress after background update completes
+        supabase
+          .from('stories')
+          .select('progress')
+          .eq('id', storyId)
+          .single()
+          .then(({ data: updatedStory }) => {
+            if (updatedStory) {
+              setStory({ ...story, progress: updatedStory.progress });
+            }
+          });
+      }).catch(err => {
+        console.error('Error updating progress in UI:', err);
+      });
     }
   };
 

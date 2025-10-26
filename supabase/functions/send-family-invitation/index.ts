@@ -43,7 +43,21 @@ Deno.serve(async (req: Request) => {
       }
     });
 
-    const { invitationId }: InvitationEmailData = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch (e) {
+      console.error('Failed to parse request body:', e);
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const { invitationId }: InvitationEmailData = body;
 
     if (!invitationId) {
       return new Response(
@@ -86,7 +100,7 @@ Deno.serve(async (req: Request) => {
       inviterName = parts.filter(Boolean).join(' ') || inviterProfile.email || "Alguien";
     }
 
-    const appUrl = Deno.env.get("APP_URL") || "https://pfvpnltnzglbvnkbkius.supabase.co";
+    const appUrl = Deno.env.get("APP_URL") || "https://www.ethernalapp.com";
     const invitationLink = `${appUrl}/accept-invitation?token=${invitation.token}`;
     const familyName = (invitation.family_groups as any)?.name || "un grupo familiar";
 
@@ -130,19 +144,18 @@ Deno.serve(async (req: Request) => {
               overflow: hidden;
             }
             .header {
-              background: linear-gradient(135deg, #C57B57 0%, #f59e0b 100%);
+              background: #2563EB;
               padding: 40px 30px;
               text-align: center;
             }
             .logo-wrapper {
-              margin-bottom: 20px;
+              margin-bottom: 15px;
             }
-            .logo-text {
-              color: white;
-              font-size: 32px;
-              font-weight: bold;
-              letter-spacing: -0.5px;
-              margin: 0;
+            .logo-img {
+              max-width: 240px;
+              height: auto;
+              display: block;
+              margin: 0 auto;
             }
             .header-subtitle {
               color: rgba(255, 255, 255, 0.95);
@@ -251,9 +264,9 @@ Deno.serve(async (req: Request) => {
               color: white;
             }
             .footer-logo {
-              font-size: 24px;
-              font-weight: bold;
-              margin-bottom: 15px;
+              max-width: 180px;
+              height: auto;
+              margin: 0 auto 15px auto;
             }
             .footer-text {
               font-size: 13px;
@@ -272,7 +285,7 @@ Deno.serve(async (req: Request) => {
           <div class="container">
             <div class="header">
               <div class="logo-wrapper">
-                <h1 class="logo-text">✨ Ethernal</h1>
+                <img src="https://www.ethernalapp.com/logo-blanco-horizontal.png" alt="Ethernal" class="logo-img" />
               </div>
               <p class="header-subtitle">Preservando las historias de tu familia</p>
             </div>
@@ -311,7 +324,7 @@ Deno.serve(async (req: Request) => {
             </div>
 
             <div class="footer">
-              <div class="footer-logo">Ethernal</div>
+              <img src="https://www.ethernalapp.com/logo-blanco-horizontal.png" alt="Ethernal" class="footer-logo" />
               <p class="footer-text">Esta invitación fue enviada por ${inviterName}</p>
               <p class="footer-text">Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
               <p class="footer-link">${invitationLink}</p>
@@ -350,7 +363,6 @@ Ethernal - Preservando las historias de tu familia
     console.log(`Role: ${roleDisplayName}`);
     console.log(`Link: ${invitationLink}`);
 
-    // Send email using Resend
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
 
     if (!resendApiKey) {
@@ -364,7 +376,7 @@ Ethernal - Preservando las historias de tu familia
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Ethernal <onboarding@resend.dev>',
+        from: 'Ethernal <contacto@ethernalapp.com>',
         to: [invitation.email],
         subject: `${inviterName} te ha invitado a ${familyName}`,
         html: emailHtml,
